@@ -30,6 +30,7 @@ import {
   MessageCircle,
   Printer,
   Ruler,
+  Copy,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -939,7 +940,7 @@ export default function CoachingLogbuch() {
                   <Nutrition profile={profile} nutrition={nutrition} setNutrition={updateNutrition} foodDb={foodDb} customFoods={customFoods} setCustomFoods={updateCustomFoods} flash={flash} readOnly={role !== "coachee"} />
                 )}
                 {tab === "weight" && <WeightTab profile={profile} weights={weights} setWeights={updateWeights} measurements={measurements} setMeasurements={updateMeasurements} flash={flash} readOnly={role !== "coachee"} />}
-                {tab === "messages" && <MessagesView messages={messages} setMessages={updateMessages} role={role} coacheeName={profile?.name} />}
+                {tab === "messages" && <MessagesView messages={messages} setMessages={updateMessages} role={role} coacheeId={selectedCoacheeId} coacheeName={profile?.name} />}
                 {tab === "avatar" && role === "coachee" && (
                   <AvatarTab profile={profile} updateProfile={updateProfile} sessions={sessions} nutrition={nutrition} weights={weights} plans={plans} exercises={exercises} />
                 )}
@@ -1856,18 +1857,74 @@ function WeightTab({ profile, weights, setWeights, measurements, setMeasurements
 }
 
 /* ================= Nachrichten ================= */
-function MessagesView({ messages, setMessages, role, coacheeName }) {
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+async function enablePushNotifications(subscriberKey) {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return { ok: false, reason: "unsupported" };
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  if (!vapidKey) return { ok: false, reason: "not_configured" };
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") return { ok: false, reason: "denied" };
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) });
+    await saveKey(subscriberKey, sub.toJSON());
+    return { ok: true };
+  } catch (e) {
+    console.error("Push-Registrierung fehlgeschlagen:", e);
+    return { ok: false, reason: "error" };
+  }
+}
+async function sendPushNotify(targetKey, title, body) {
+  try {
+    await fetch(`${API_BASE}/push/notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetKey: STORAGE_PREFIX + targetKey, title, body }),
+    });
+  } catch (e) {}
+}
+
+function MessagesView({ messages, setMessages, role, coacheeId, coacheeName }) {
   const [text, setText] = useState("");
+  const [pushStatus, setPushStatus] = useState(null);
+  const otherRole = role === "coach" ? "coachee" : "coach";
+
   const send = () => {
     if (!text.trim()) return;
     setMessages([...messages, { id: uid(), from: role, text: text.trim(), at: new Date().toISOString() }]);
+    if (coacheeId) {
+      sendPushNotify(
+        `push-sub-${otherRole}-${coacheeId}`,
+        role === "coach" ? "Neue Nachricht von deinem Coach" : `Neue Nachricht von ${coacheeName || "deinem Coachee"}`,
+        text.trim()
+      );
+    }
     setText("");
   };
+
+  const activatePush = async () => {
+    if (!coacheeId) return;
+    setPushStatus("…");
+    const r = await enablePushNotifications(`push-sub-${role}-${coacheeId}`);
+    setPushStatus(r.ok ? "Aktiviert — du bekommst jetzt Benachrichtigungen auf diesem Gerät." : r.reason === "denied" ? "Erlaubnis wurde nicht erteilt." : r.reason === "not_configured" ? "Push ist serverseitig noch nicht eingerichtet." : "Auf diesem Gerät/Browser nicht unterstützt.");
+  };
+
   const sorted = [...messages].sort((a, b) => a.at.localeCompare(b.at));
   return (
     <div className="ptlog-section">
       <h2>Nachrichten{coacheeName ? ` mit ${coacheeName}` : ""}</h2>
       <div className="ptlog-card">
+        <div className="ptlog-row-between" style={{ marginBottom: 10 }}>
+          <span className="ptlog-muted" style={{ fontSize: 12 }}>Benachrichtigungen für neue Nachrichten auf diesem Gerät</span>
+          <button className="ptlog-btn" type="button" onClick={activatePush}>🔔 Aktivieren</button>
+        </div>
+        {pushStatus && <p className="ptlog-muted" style={{ marginTop: -4 }}>{pushStatus}</p>}
         {sorted.length === 0 ? (
           <p className="ptlog-muted">Noch keine Nachrichten.</p>
         ) : (
@@ -2201,11 +2258,13 @@ function SetRowsEditor({ sets, onChange }) {
   const remove = (i) => onChange(sets.filter((_, idx) => idx !== i));
   return (
     <div className="ptlog-setrows">
+      <div className="ptlog-setrow-header"><span>Satz</span><span>kg</span><span>Wdh.</span><span>Strecke/Zeit</span><span></span></div>
       {sets.map((s, i) => (
         <div key={i} className="ptlog-setrow">
-          <input placeholder="Wdh." type="number" value={s.reps} onChange={(e) => update(i, "reps", e.target.value)} />
+          <span className="ptlog-muted">{i + 1}</span>
           <input placeholder="kg" type="number" value={s.weight} onChange={(e) => update(i, "weight", e.target.value)} />
-          <input placeholder="Strecke/Zeit (frei, z. B. 2 km)" value={s.distance} onChange={(e) => update(i, "distance", e.target.value)} />
+          <input placeholder="Wdh." type="number" value={s.reps} onChange={(e) => update(i, "reps", e.target.value)} />
+          <input placeholder="z. B. 2 km" value={s.distance} onChange={(e) => update(i, "distance", e.target.value)} />
           <button className="ptlog-btn-x" type="button" onClick={() => remove(i)} disabled={sets.length === 1}><X size={13} /></button>
         </div>
       ))}
@@ -2355,8 +2414,12 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
   const [f, setF] = useState(emptyPlan);
   const availableWorkouts = workouts.filter((w) => !w.assignedCoacheeIds || w.assignedCoacheeIds.length === 0 || w.assignedCoacheeIds.includes(coacheeId));
 
-  const startNew = () => { setF(emptyPlan); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
+  const startNew = () => {
+    setF({ name: "", days: WEEKDAY_ABBR.map((w, idx) => ({ id: uid(), label: w.toLowerCase() + ".", weekday: idx, workoutId: "", overrides: {} })) });
+    setEditingId(null); setShowForm(true); setExpandedDayId(null);
+  };
   const startEdit = (p) => { setF({ ...p }); setEditingId(p.id); setShowForm(true); setExpandedDayId(null); };
+  const duplicatePlan = (p) => { setF({ ...p, name: p.name + " (Kopie)" }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
   const addDay = () => setF((prev) => ({ ...prev, days: [...prev.days, { id: uid(), label: "", weekday: null, workoutId: "", overrides: {} }] }));
   const updateDay = (id, key, val) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === id ? { ...d, [key]: val } : d)) }));
   const setDayWeekday = (id, idx) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === id ? { ...d, weekday: idx, label: WEEKDAY_ABBR[idx].toLowerCase() + "." } : d)) }));
@@ -2386,6 +2449,7 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
               <li key={p.id}>
                 <div onClick={() => startEdit(p)} style={{ cursor: "pointer" }}><strong>{p.name}</strong>{p.active && <span className="ptlog-tag-mini good">aktiv</span>}<div className="ptlog-entry-macros">{p.days.length} Tage</div></div>
                 <div style={{ display: "flex", gap: 6 }}>
+                  <button className="ptlog-btn-x" onClick={() => duplicatePlan(p)} aria-label="Duplizieren"><Copy size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => triggerPrint(p)} aria-label="Drucken / als PDF speichern"><Printer size={15} /></button>
                   {!p.active && <button className="ptlog-btn" onClick={() => activate(p.id)}>aktivieren</button>}
                 </div>
@@ -2397,7 +2461,7 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
         <div>
           <div className="ptlog-card-header-row"><h3>{editingId ? "Plan bearbeiten" : "Neuer Plan"}</h3><button className="ptlog-btn" onClick={() => setShowForm(false)}><X size={14} /></button></div>
           <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Wochentag auswählen, damit der Kalender Plan und Ist abgleichen kann. In der Auswahl erscheinen nur Workouts, die für alle oder für diesen Coachee freigegeben sind. Zielwerte lassen sich pro Tag für diesen Coachee anpassen, ohne die Vorlage für andere zu verändern.</p>
+          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Alle 7 Wochentage sind schon als Ruhetag vorausgefüllt — einfach die passenden Tage mit Workouts belegen. Für eine neue Woche kannst du in der Liste einen bestehenden Plan über <Copy size={11} style={{ verticalAlign: "-1px" }} /> duplizieren, statt neu aufzubauen. Zielwerte lassen sich pro Tag für diesen Coachee anpassen, ohne die Vorlage für andere zu verändern.</p>
           {f.days.map((d) => {
             const workout = workouts.find((w) => w.id === d.workoutId);
             const items = workout ? workout.groups.flatMap((g) => g.items) : [];
@@ -2501,7 +2565,7 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
     setActiveSession((prev) => {
       const entry = prev.entries.find((e) => e.id === entryId);
       const wasDone = entry.sets[setIdx].done;
-      if (!wasDone) setRestTimer({ entryId, remaining: entry.restSeconds || 90, total: entry.restSeconds || 90 });
+      if (!wasDone) setRestTimer({ entryId, setIdx, remaining: entry.restSeconds || 90, total: entry.restSeconds || 90 });
       return { ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => (i === setIdx ? { ...s, done: !s.done } : s)) } : e)) };
     });
   };
@@ -2580,32 +2644,39 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
                 <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                 <strong>{ex ? ex.name : "?"}</strong>
               </div>
+              <div className="ptlog-settable-header">
+                <span>Satz</span><span>Vorherige</span><span>kg</span><span>Wdh.</span><span></span>
+              </div>
               {entry.sets.map((s, si) => {
                 const prevRef = getPreviousSetRef(sessions, entry.exerciseId, activeSession.id, si);
                 return (
-                  <div key={si} className="ptlog-set-block">
-                    {prevRef && <div className="ptlog-prev-value">Vorherige: {prevRef}</div>}
-                    <div className="ptlog-log-setrow">
-                      <span className="ptlog-muted" style={{ width: 18 }}>{si + 1}</span>
-                      <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
+                  <React.Fragment key={si}>
+                    <div className={"ptlog-settable-row" + (s.done ? " done" : "")}>
+                      <span className="ptlog-muted">{si + 1}</span>
+                      <span className="ptlog-settable-prev">{prevRef || "—"}</span>
                       <input type="number" placeholder={s.target.weight || "kg"} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
-                      <input placeholder={s.target.distance || "—"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
+                      <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
                       <button type="button" className={"ptlog-check-btn" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={14} /></button>
                     </div>
+                    {s.target.distance || s.distance ? (
+                      <input className="ptlog-settable-distance" placeholder={s.target.distance || "Strecke/Zeit"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
+                    ) : null}
                     <div className="ptlog-log-setrow-extra">
                       <input type="number" min="1" max="10" placeholder="RPE" value={s.rpe} onChange={(e) => updateEntrySet(entry.id, si, "rpe", e.target.value)} />
                       <button type="button" className={"ptlog-pain-btn" + (s.pain ? " active" : "")} onClick={() => updateEntrySet(entry.id, si, "pain", !s.pain)}>⚠️ Schmerz</button>
                     </div>
-                  </div>
+                    {restTimer && restTimer.entryId === entry.id && restTimer.setIdx === si && restTimer.remaining > 0 && (
+                      <div className="ptlog-rest-timer-inline">
+                        <span className="ptlog-rest-line" />
+                        <span>{Math.floor(restTimer.remaining / 60)}:{String(restTimer.remaining % 60).padStart(2, "0")}</span>
+                        <span className="ptlog-rest-line" />
+                        <button className="ptlog-btn-x" type="button" onClick={() => setRestTimer(null)} aria-label="Pause überspringen"><X size={13} /></button>
+                      </div>
+                    )}
+                  </React.Fragment>
                 );
               })}
               <button className="ptlog-btn" type="button" onClick={() => addSetToEntry(entry.id)} style={{ marginTop: 6 }}><Plus size={12} /> Satz</button>
-              {restTimer && restTimer.entryId === entry.id && restTimer.remaining > 0 && (
-                <div className="ptlog-rest-timer">
-                  <span>Pause: {Math.floor(restTimer.remaining / 60)}:{String(restTimer.remaining % 60).padStart(2, "0")}</span>
-                  <button className="ptlog-btn" type="button" onClick={() => setRestTimer(null)}>Überspringen</button>
-                </div>
-              )}
             </div>
           );
         })}
@@ -3111,6 +3182,14 @@ const CSS = `
 .ptlog-roster-warning { font-size: 11px; color: var(--warn); margin-top: 2px; }
 
 .ptlog-set-block { margin-bottom: 6px; }
+.ptlog-setrow-header { display: grid; grid-template-columns: 24px 60px 60px 1fr 26px; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.ptlog-settable-header { display: grid; grid-template-columns: 22px 1fr 55px 55px 32px; gap: 6px; font-size: 11px; color: var(--muted); margin: 6px 0 4px; }
+.ptlog-settable-row { display: grid; grid-template-columns: 22px 1fr 55px 55px 32px; gap: 6px; align-items: center; padding: 6px 4px; border-radius: 8px; margin-bottom: 2px; }
+.ptlog-settable-row.done { background: rgba(74,222,158,0.14); }
+.ptlog-settable-prev { font-size: 12px; color: var(--muted); }
+.ptlog-settable-distance { width: 100%; margin: 0 0 6px 28px; font-size: 12px; }
+.ptlog-rest-timer-inline { display: grid; grid-template-columns: 1fr auto 1fr auto; align-items: center; gap: 8px; margin: 2px 0 8px; color: var(--accent); font-weight: 700; font-size: 13px; }
+.ptlog-rest-line { height: 1px; background: rgba(255,143,94,0.35); }
 .ptlog-prev-value { font-size: 11px; color: var(--muted); margin-bottom: 3px; padding-left: 24px; }
 .ptlog-rest-timer { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; margin-top: 8px; font-size: 13px; color: var(--accent); font-weight: 600; }
 

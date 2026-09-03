@@ -2,6 +2,7 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
+const webpush = require("web-push");
 
 const app = express();
 app.use(cors());
@@ -13,6 +14,14 @@ const pool = new Pool({
     ? false
     : { rejectUnauthorized: false },
 });
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:kontakt@example.com",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
 
 async function ensureSchema() {
   await pool.query(`
@@ -58,6 +67,24 @@ app.delete("/api/storage/:key", async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "delete_failed" });
+  }
+});
+
+app.post("/api/push/notify", async (req, res) => {
+  try {
+    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+      return res.json({ ok: false, reason: "vapid_not_configured" });
+    }
+    const { targetKey, title, body } = req.body || {};
+    if (!targetKey) return res.status(400).json({ ok: false, reason: "missing_target" });
+    const r = await pool.query("SELECT value FROM storage WHERE key = $1", [targetKey]);
+    if (!r.rows[0] || !r.rows[0].value) return res.json({ ok: false, reason: "no_subscription" });
+    const sub = JSON.parse(r.rows[0].value);
+    await webpush.sendNotification(sub, JSON.stringify({ title: title || "Coaching-Logbuch", body: body || "" }));
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Push fehlgeschlagen:", e.message);
+    res.json({ ok: false, reason: "send_failed" });
   }
 });
 
