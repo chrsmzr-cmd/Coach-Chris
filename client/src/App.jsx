@@ -328,10 +328,11 @@ function fileToDataUrl(file) {
 
 /* ---------- Zielangaben formatieren ---------- */
 function formatSetTarget(s) {
+  const unit = s.unit === "min" ? "Min" : "kg";
   if (s.distance) return s.distance;
-  if (s.reps && s.weight) return `${s.reps} × ${s.weight} kg`;
+  if (s.reps && s.weight) return `${s.reps} × ${s.weight} ${unit}`;
   if (s.reps) return `${s.reps} Wdh.`;
-  if (s.weight) return `${s.weight} kg`;
+  if (s.weight) return `${s.weight} ${unit}`;
   return "–";
 }
 function formatLoggedSet(s) {
@@ -348,6 +349,9 @@ function summarizeItemTarget(item) {
   const allSame = item.sets.every((s) => s.reps === first.reps && s.weight === first.weight && s.distance === first.distance);
   if (allSame) return `${item.sets.length}× ${formatSetTarget(first)}`;
   return item.sets.map(formatSetTarget).join(" · ");
+}
+function isSuperset(g) {
+  return g.type ? g.type === "superset" : g.items.length > 1;
 }
 function resolveWorkoutForDay(workout, day) {
   if (!workout) return workout;
@@ -2252,17 +2256,18 @@ function ExercisePicker({ exercises, profile, onPick, placeholder }) {
   );
 }
 
-function SetRowsEditor({ sets, onChange }) {
+function SetRowsEditor({ sets, onChange, unit = "kg" }) {
   const update = (i, key, val) => { const next = [...sets]; next[i] = { ...next[i], [key]: val }; onChange(next); };
-  const add = () => onChange([...sets, { reps: "", weight: "", distance: "" }]);
+  const add = () => onChange([...sets, { reps: "", weight: "", distance: "", unit }]);
   const remove = (i) => onChange(sets.filter((_, idx) => idx !== i));
+  const unitLabel = unit === "min" ? "Min" : "kg";
   return (
     <div className="ptlog-setrows">
-      <div className="ptlog-setrow-header"><span>Satz</span><span>kg</span><span>Wdh.</span><span>Strecke/Zeit</span><span></span></div>
+      <div className="ptlog-setrow-header"><span>Satz</span><span>{unitLabel}</span><span>Wdh.</span><span>Strecke/Zeit</span><span></span></div>
       {sets.map((s, i) => (
         <div key={i} className="ptlog-setrow">
           <span className="ptlog-muted">{i + 1}</span>
-          <input placeholder="kg" type="number" value={s.weight} onChange={(e) => update(i, "weight", e.target.value)} />
+          <input placeholder={unitLabel} type="number" value={s.weight} onChange={(e) => update(i, "weight", e.target.value)} />
           <input placeholder="Wdh." type="number" value={s.reps} onChange={(e) => update(i, "reps", e.target.value)} />
           <input placeholder="z. B. 2 km" value={s.distance} onChange={(e) => update(i, "distance", e.target.value)} />
           <button className="ptlog-btn-x" type="button" onClick={() => remove(i)} disabled={sets.length === 1}><X size={13} /></button>
@@ -2281,13 +2286,14 @@ function WorkoutManager({ workouts, setWorkouts, exercises, profile, coachees })
 
   const startNew = () => { setF(emptyWorkout); setEditingId(null); setShowForm(true); };
   const startEdit = (w) => { setF({ assignedCoacheeIds: [], type: "training", ...w }); setEditingId(w.id); setShowForm(true); };
-  const addBlock = () => setF((prev) => ({ ...prev, groups: [...prev.groups, { id: uid(), rounds: 1, items: [] }] }));
+  const addBlock = (type) => setF((prev) => ({ ...prev, groups: [...prev.groups, { id: uid(), type, rounds: 1, items: [] }] }));
   const removeBlock = (gid) => setF((prev) => ({ ...prev, groups: prev.groups.filter((g) => g.id !== gid) }));
   const updateBlockRounds = (gid, rounds) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, rounds } : g)) }));
-  const addItemToBlock = (gid, exerciseId) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, sets: [{ reps: "", weight: "", distance: "" }] }] } : g)) }));
+  const addItemToBlock = (gid, exerciseId) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", sets: [{ reps: "", weight: "", distance: "", unit: "kg" }] }] } : g)) }));
   const removeItem = (gid, itemId) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.filter((i) => i.id !== itemId) } : g)) }));
   const updateItemSets = (gid, itemId, sets) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, sets } : i)) } : g)) }));
   const updateItemRest = (gid, itemId, restSeconds) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, restSeconds } : i)) } : g)) }));
+  const updateItemUnit = (gid, itemId, unit) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, unit, sets: i.sets.map((s) => ({ ...s, unit })) } : i)) } : g)) }));
   const toggleAssignedCoachee = (id) => setF((prev) => ({ ...prev, assignedCoacheeIds: prev.assignedCoacheeIds.includes(id) ? prev.assignedCoacheeIds.filter((x) => x !== id) : [...prev.assignedCoacheeIds, id] }));
 
   const save = () => {
@@ -2336,13 +2342,15 @@ function WorkoutManager({ workouts, setWorkouts, exercises, profile, coachees })
             </div>
           </Field>
 
-          {f.groups.map((g, gi) => (
+          {f.groups.map((g, gi) => {
+            const superset = isSuperset(g);
+            return (
             <div key={g.id} className="ptlog-block-card">
               <div className="ptlog-row-between">
-                <strong>{g.items.length > 1 ? "Super Set" : "Übungsblock"} {gi + 1}</strong>
+                <strong>{superset ? "Super Set" : "Normaler Satz"} {gi + 1}</strong>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {g.items.length > 1 && <input type="number" min="1" value={g.rounds} onChange={(e) => updateBlockRounds(g.id, e.target.value)} style={{ width: 56 }} />}
-                  {g.items.length > 1 && <span className="ptlog-muted" style={{ fontSize: 12 }}>Runden</span>}
+                  {superset && <input type="number" min="1" value={g.rounds} onChange={(e) => updateBlockRounds(g.id, e.target.value)} style={{ width: 56 }} />}
+                  {superset && <span className="ptlog-muted" style={{ fontSize: 12 }}>Runden</span>}
                   <button className="ptlog-btn-x" onClick={() => removeBlock(g.id)}><X size={14} /></button>
                 </div>
               </div>
@@ -2350,8 +2358,15 @@ function WorkoutManager({ workouts, setWorkouts, exercises, profile, coachees })
                 const ex = exercises.find((e) => e.id === item.exerciseId);
                 return (
                   <div key={item.id} className="ptlog-block-item">
-                    <div className="ptlog-row-between"><span>{String.fromCharCode(65 + ii)} · {ex ? ex.name : "?"}</span><button className="ptlog-btn-x" onClick={() => removeItem(g.id, item.id)}><X size={13} /></button></div>
-                    <SetRowsEditor sets={item.sets} onChange={(sets) => updateItemSets(g.id, item.id, sets)} />
+                    <div className="ptlog-row-between">
+                      <span>{superset ? String.fromCharCode(65 + ii) + " · " : ""}{ex ? ex.name : "?"}</span>
+                      <button className="ptlog-btn-x" onClick={() => removeItem(g.id, item.id)}><X size={13} /></button>
+                    </div>
+                    <div className="ptlog-mode-tabs" style={{ margin: "4px 0" }}>
+                      <button type="button" className={"ptlog-mode-btn" + ((item.unit || "kg") === "kg" ? " active" : "")} onClick={() => updateItemUnit(g.id, item.id, "kg")}>kg</button>
+                      <button type="button" className={"ptlog-mode-btn" + (item.unit === "min" ? " active" : "")} onClick={() => updateItemUnit(g.id, item.id, "min")}>Minuten</button>
+                    </div>
+                    <SetRowsEditor sets={item.sets} unit={item.unit || "kg"} onChange={(sets) => updateItemSets(g.id, item.id, sets)} />
                     <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
                       <span>Pause zwischen Sätzen (Sek.)</span>
                       <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(g.id, item.id, Number(e.target.value))} />
@@ -2359,10 +2374,16 @@ function WorkoutManager({ workouts, setWorkouts, exercises, profile, coachees })
                   </div>
                 );
               })}
-              <ExercisePicker exercises={exercises} profile={profile} onPick={(exId) => addItemToBlock(g.id, exId)} placeholder="Übung zu diesem Block hinzufügen…" />
+              {(superset || g.items.length === 0) && (
+                <ExercisePicker exercises={exercises} profile={profile} onPick={(exId) => addItemToBlock(g.id, exId)} placeholder="Übung zu diesem Block hinzufügen…" />
+              )}
             </div>
-          ))}
-          <button className="ptlog-btn wide" type="button" onClick={addBlock}><Plus size={14} /> Übungsblock</button>
+            );
+          })}
+          <div className="ptlog-add-row">
+            <button className="ptlog-btn" type="button" onClick={() => addBlock("normal")}><Plus size={14} /> Normaler Satz</button>
+            <button className="ptlog-btn" type="button" onClick={() => addBlock("superset")}><Plus size={14} /> Supersatz</button>
+          </div>
           <div className="ptlog-add-row">
             <button className="ptlog-btn primary" onClick={save}>Workout speichern</button>
             {editingId && <button className="ptlog-btn" onClick={() => { remove(editingId); setShowForm(false); }} style={{ color: COLORS.warn }}>Löschen</button>}
@@ -2387,7 +2408,7 @@ function PrintablePlan({ plan, workouts, exercises, coacheeName }) {
             {workout && workout.note && <p><em>{workout.note}</em></p>}
             {workout && workout.groups.map((g) => (
               <div key={g.id}>
-                {g.items.length > 1 && <p><strong>Super Set · {g.rounds} Runden</strong></p>}
+                {isSuperset(g) && <p><strong>Super Set · {g.rounds} Runden</strong></p>}
                 <ul>
                   {g.items.map((item) => {
                     const ex = exercises.find((e) => e.id === item.exerciseId);
@@ -2495,7 +2516,7 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
                                 <span>{overridden ? "🔧 " : ""}Übung {items.indexOf(item) + 1}{overridden ? " (individuell)" : " (Vorlage)"}</span>
                                 {overridden && <button className="ptlog-btn" type="button" style={{ fontSize: 11 }} onClick={() => resetDayOverride(d.id, item.id)}>Zurücksetzen</button>}
                               </div>
-                              <SetRowsEditor sets={currentSets} onChange={(sets) => updateDayOverride(d.id, item.id, sets)} />
+                              <SetRowsEditor sets={currentSets} unit={item.unit || "kg"} onChange={(sets) => updateDayOverride(d.id, item.id, sets)} />
                             </div>
                           );
                         })}
@@ -2557,9 +2578,10 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
     setView("session");
   };
   const addAdHocExercise = (exerciseId) => {
-    setActiveSession((prev) => ({ ...prev, entries: [...prev.entries, { id: uid(), exerciseId, restSeconds: 90, sets: [{ target: {}, reps: "", weight: "", distance: "", rpe: "", pain: false, done: false }], clientNote: "" }] }));
+    setActiveSession((prev) => ({ ...prev, entries: [...prev.entries, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", sets: [{ target: { unit: "kg" }, reps: "", weight: "", distance: "", unit: "kg", rpe: "", pain: false, done: false }], clientNote: "" }] }));
   };
-  const addSetToEntry = (entryId) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: [...e.sets, { target: {}, reps: "", weight: "", distance: "", rpe: "", pain: false, done: false }] } : e)) }));
+  const setEntryUnit = (entryId, unit) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, unit, sets: e.sets.map((s) => ({ ...s, unit, target: { ...s.target, unit } })) } : e)) }));
+  const addSetToEntry = (entryId) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: [...e.sets, { target: { unit: e.unit || "kg" }, reps: "", weight: "", distance: "", unit: e.unit || "kg", rpe: "", pain: false, done: false }] } : e)) }));
   const updateEntrySet = (entryId, setIdx, key, val) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => (i === setIdx ? { ...s, [key]: val } : s)) } : e)) }));
   const toggleSetDone = (entryId, setIdx) => {
     setActiveSession((prev) => {
@@ -2608,14 +2630,14 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
         {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
         {workout.groups.map((g) => (
           <div key={g.id} className="ptlog-block-card">
-            {g.items.length > 1 && <div className="ptlog-muted" style={{ fontSize: 12, marginBottom: 6 }}>Super Set · {g.rounds} Runde{g.rounds != 1 ? "n" : ""}</div>}
+            {isSuperset(g) && <div className="ptlog-muted" style={{ fontSize: 12, marginBottom: 6 }}>Super Set · {g.rounds} Runde{g.rounds != 1 ? "n" : ""}</div>}
             {g.items.map((item, ii) => {
               const ex = exercises.find((e) => e.id === item.exerciseId);
               return (
                 <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
                   <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                   <div className="ptlog-exercise-info"><strong>{ex ? ex.name : "?"}</strong><span className="ptlog-muted">{summarizeItemTarget(item)}</span></div>
-                  {g.items.length > 1 && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
+                  {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
                 </div>
               );
             })}
@@ -2644,17 +2666,24 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
                 <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                 <strong>{ex ? ex.name : "?"}</strong>
               </div>
+              {activeSession.workoutId === null && (
+                <div className="ptlog-mode-tabs" style={{ margin: "0 0 6px" }}>
+                  <button type="button" className={"ptlog-mode-btn" + ((entry.unit || "kg") === "kg" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "kg")}>kg</button>
+                  <button type="button" className={"ptlog-mode-btn" + (entry.unit === "min" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "min")}>Minuten</button>
+                </div>
+              )}
               <div className="ptlog-settable-header">
-                <span>Satz</span><span>Vorherige</span><span>kg</span><span>Wdh.</span><span></span>
+                <span>Satz</span><span>Vorherige</span><span>{(entry.unit || entry.sets[0]?.target?.unit) === "min" ? "Min" : "kg"}</span><span>Wdh.</span><span></span>
               </div>
               {entry.sets.map((s, si) => {
                 const prevRef = getPreviousSetRef(sessions, entry.exerciseId, activeSession.id, si);
+                const unitLabel = (s.target.unit || entry.unit) === "min" ? "Min" : "kg";
                 return (
                   <React.Fragment key={si}>
                     <div className={"ptlog-settable-row" + (s.done ? " done" : "")}>
                       <span className="ptlog-muted">{si + 1}</span>
                       <span className="ptlog-settable-prev">{prevRef || "—"}</span>
-                      <input type="number" placeholder={s.target.weight || "kg"} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
+                      <input type="number" placeholder={s.target.weight || unitLabel} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
                       <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
                       <button type="button" className={"ptlog-check-btn" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={14} /></button>
                     </div>
