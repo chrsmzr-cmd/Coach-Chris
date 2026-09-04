@@ -24,6 +24,7 @@ import {
   Check,
   Plus,
   ChevronLeft,
+  ChevronDown,
   Award,
   Lock,
   MoreHorizontal,
@@ -352,12 +353,6 @@ function summarizeItemTarget(item) {
 }
 function isSuperset(g) {
   return g.type ? g.type === "superset" : g.items.length > 1;
-}
-function resolveWorkoutForDay(workout, day) {
-  if (!workout) return workout;
-  const overrides = day?.overrides || {};
-  if (!Object.keys(overrides).length) return workout;
-  return { ...workout, groups: workout.groups.map((g) => ({ ...g, items: g.items.map((item) => (overrides[item.id] ? { ...item, sets: overrides[item.id].sets } : item)) })) };
 }
 function planIdActiveOn(history, plans, iso) {
   if (history && history.length) {
@@ -725,7 +720,6 @@ export default function CoachingLogbuch() {
   const [checkins, setCheckinsState] = useState([]);
   const [customFoods, setCustomFoods] = useState([]);
   const [exercises, setExercisesState] = useState([]);
-  const [workouts, setWorkoutsState] = useState([]);
   const [plans, setPlansState] = useState([]);
   const [planHistory, setPlanHistoryState] = useState([]);
   const [sessions, setSessionsState] = useState([]);
@@ -734,14 +728,13 @@ export default function CoachingLogbuch() {
 
   useEffect(() => {
     (async () => {
-      const [co, c, ex, wo, cf, r, sc, ssc, pa] = await Promise.all([
-        loadKey("coaches"), loadKey("coachees"), loadKey("exercises"), loadKey("workouts"), loadKey("customfoods"),
+      const [co, c, ex, cf, r, sc, ssc, pa] = await Promise.all([
+        loadKey("coaches"), loadKey("coachees"), loadKey("exercises"), loadKey("customfoods"),
         loadKey("role", false), loadKey("selected-coachee", false), loadKey("selected-coach", false), loadKey("privacy-ack", false),
       ]);
       setCoaches(co || []);
       setCoachees(c || []);
       setExercisesState(ex || []);
-      setWorkoutsState(wo || []);
       setCustomFoods(cf || []);
       setRole(r || null);
       const validSelection = sc && (c || []).some((cc) => cc.id === sc) ? sc : null;
@@ -801,7 +794,6 @@ export default function CoachingLogbuch() {
   const updateCheckins = useCallback(async (next) => { setCheckinsState(next); await saveKey(`checkins-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const updateCustomFoods = useCallback(async (next) => { setCustomFoods(next); await saveKey("customfoods", next); }, []);
   const updateExercises = useCallback(async (next) => { setExercisesState(next); await saveKey("exercises", next); }, []);
-  const updateWorkouts = useCallback(async (next) => { setWorkoutsState(next); await saveKey("workouts", next); }, []);
   const updatePlans = useCallback(async (next) => { setPlansState(next); await saveKey(`plans-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const updateSessions = useCallback(async (next) => { setSessionsState(next); await saveKey(`sessions-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const recordPlanActivation = useCallback(async (planId) => {
@@ -950,9 +942,9 @@ export default function CoachingLogbuch() {
                 )}
                 {tab === "training" && (
                   role === "coachee" ? (
-                    <CoacheeTrainingView plans={plans} workouts={workouts} exercises={exercises} sessions={sessions} setSessions={updateSessions} setExercises={updateExercises} flash={flash} />
+                    <CoacheeTrainingView plans={plans} exercises={exercises} sessions={sessions} setSessions={updateSessions} setExercises={updateExercises} flash={flash} />
                   ) : (
-                    <CoachTrainingView exercises={exercises} setExercises={updateExercises} workouts={workouts} setWorkouts={updateWorkouts} plans={plans} setPlans={updatePlans} profile={profile} sessions={sessions} coachees={coachees} coacheeId={selectedCoacheeId} planHistory={planHistory} onActivatePlan={recordPlanActivation} />
+                    <CoachTrainingView exercises={exercises} setExercises={updateExercises} plans={plans} setPlans={updatePlans} profile={profile} sessions={sessions} coachees={coachees} coacheeId={selectedCoacheeId} planHistory={planHistory} onActivatePlan={recordPlanActivation} />
                   )
                 )}
               </>
@@ -1951,22 +1943,22 @@ function MessagesView({ messages, setMessages, role, coacheeId, coacheeName }) {
 }
 
 /* ================= Trainingsplanung — Coach ================= */
-function CoachTrainingView({ exercises, setExercises, workouts, setWorkouts, plans, setPlans, profile, sessions, coachees, coacheeId, planHistory, onActivatePlan }) {
+function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, sessions, coachees, coacheeId, planHistory, onActivatePlan }) {
   const [sub, setSub] = useState("plans");
   return (
     <div className="ptlog-section">
       <h2>Trainingsplanung</h2>
       <div className="ptlog-mode-tabs">
         <button className={"ptlog-mode-btn" + (sub === "plans" ? " active" : "")} onClick={() => setSub("plans")}>Pläne</button>
-        <button className={"ptlog-mode-btn" + (sub === "workouts" ? " active" : "")} onClick={() => setSub("workouts")}>Workouts</button>
+        <button className={"ptlog-mode-btn" + (sub === "history" ? " active" : "")} onClick={() => setSub("history")}>Verlauf</button>
         <button className={"ptlog-mode-btn" + (sub === "library" ? " active" : "")} onClick={() => setSub("library")}>Übungen</button>
         <button className={"ptlog-mode-btn" + (sub === "calendar" ? " active" : "")} onClick={() => setSub("calendar")}>Kalender</button>
       </div>
       <div className="ptlog-card">
-        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} workouts={workouts} exercises={exercises} coacheeId={coacheeId} onActivate={onActivatePlan} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
-        {sub === "workouts" && <WorkoutManager workouts={workouts} setWorkouts={setWorkouts} exercises={exercises} profile={profile} coachees={coachees} />}
+        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} onActivate={onActivatePlan} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
+        {sub === "history" && <SessionHistoryList sessions={sessions} exercises={exercises} />}
         {sub === "library" && <ExerciseLibraryManager exercises={exercises} setExercises={setExercises} />}
-        {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} workouts={workouts} planHistory={planHistory} />}
+        {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} planHistory={planHistory} />}
       </div>
     </div>
   );
@@ -1974,7 +1966,7 @@ function CoachTrainingView({ exercises, setExercises, workouts, setWorkouts, pla
 
 const MAIN_MUSCLE_CATEGORIES = ["Beine", "Rücken", "Brust", "Schultern", "Arme", "Bauch/Rumpf"];
 
-function CoachCalendar({ sessions, exercises, profile, plans, workouts, planHistory }) {
+function CoachCalendar({ sessions, exercises, profile, plans, planHistory }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState(null);
 
@@ -2005,11 +1997,13 @@ function CoachCalendar({ sessions, exercises, profile, plans, workouts, planHist
     const planDay = planForDay.days.find((d) => d.weekday === weekdayIdx);
     if (!planDay) return null;
     const actual = sessionsByDate[iso] || [];
-    if (!planDay.workoutId) return actual.length > 0 ? { type: "extra", planDay } : { type: "restday", planDay };
+    if (planDay.isRestDay) return actual.length > 0 ? { type: "extra", planDay } : { type: "restday", planDay };
     if (actual.length > 0) {
-      const matched = actual.some((s) => s.workoutId === planDay.workoutId);
+      const matched = actual.some((s) => s.planDayId === planDay.id);
       return matched ? { type: "matched", planDay } : { type: "deviated", planDay };
     }
+    const doneElsewhere = sessions.some((s) => s.planDayId === planDay.id);
+    if (doneElsewhere) return { type: "caughtup", planDay };
     return iso < today ? { type: "missed", planDay } : { type: "upcoming", planDay };
   };
 
@@ -2093,6 +2087,7 @@ function CoachCalendar({ sessions, exercises, profile, plans, workouts, planHist
         <div className="ptlog-cal-legend">
           <span><span className="ptlog-cal-dot" style={{ background: COLORS.good }} /> wie geplant</span>
           <span><span className="ptlog-cal-dot" style={{ background: COLORS.accent }} /> abgewichen</span>
+          <span><span className="ptlog-cal-dot" style={{ background: "#5EA8E0" }} /> nachgeholt</span>
           <span><span className="ptlog-cal-dot" style={{ background: COLORS.warn }} /> verpasst</span>
         </div>
       )}
@@ -2104,9 +2099,8 @@ function CoachCalendar({ sessions, exercises, profile, plans, workouts, planHist
           {(() => {
             const status = dayStatus(selectedDate);
             if (status?.planDay) {
-              const plannedWorkout = workouts.find((w) => w.id === status.planDay.workoutId);
-              const label = { matched: "wie geplant absolviert", deviated: "abweichend vom Plan", missed: "verpasst", extra: "zusätzlich zum Ruhetag trainiert", restday: "Ruhetag laut Plan", upcoming: "noch bevorstehend" }[status.type];
-              return (<p className="ptlog-muted" style={{ marginTop: -6 }}>Laut Plan: {plannedWorkout ? plannedWorkout.name : "Ruhetag"} — {label}</p>);
+              const label = { matched: "wie geplant absolviert", deviated: "abweichend vom Plan", missed: "verpasst", caughtup: "an anderem Tag nachgeholt", extra: "zusätzlich zum Ruhetag trainiert", restday: "Ruhetag laut Plan", upcoming: "noch bevorstehend" }[status.type];
+              return (<p className="ptlog-muted" style={{ marginTop: -6 }}>Laut Plan: {status.planDay.isRestDay ? "Ruhetag" : (status.planDay.sessionName || "Training")} — {label}</p>);
             }
             return null;
           })()}
@@ -2256,6 +2250,32 @@ function ExercisePicker({ exercises, profile, onPick, placeholder }) {
   );
 }
 
+/* Übung per echtem Dropdown auswählen (statt Suchliste) — gruppiert nach Kategorie */
+function ExerciseSelect({ exercises, onPick, placeholder }) {
+  const grouped = useMemo(() => {
+    const map = {};
+    [...exercises].sort((a, b) => a.name.localeCompare(b.name)).forEach((e) => {
+      const cat = e.category || "Sonstiges";
+      (map[cat] = map[cat] || []).push(e);
+    });
+    return map;
+  }, [exercises]);
+  return (
+    <select
+      value=""
+      onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
+      style={{ marginTop: 8 }}
+    >
+      <option value="">{placeholder || "Übung auswählen…"}</option>
+      {Object.entries(grouped).map(([cat, list]) => (
+        <optgroup key={cat} label={cat}>
+          {list.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 function SetRowsEditor({ sets, onChange, unit = "kg" }) {
   const update = (i, key, val) => { const next = [...sets]; next[i] = { ...next[i], [key]: val }; onChange(next); };
   const add = () => onChange([...sets, { reps: "", weight: "", distance: "", unit }]);
@@ -2278,175 +2298,65 @@ function SetRowsEditor({ sets, onChange, unit = "kg" }) {
   );
 }
 
-function WorkoutManager({ workouts, setWorkouts, exercises, profile, coachees }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const emptyWorkout = { name: "", note: "", isBaseline: false, type: "training", groups: [], assignedCoacheeIds: [] };
-  const [f, setF] = useState(emptyWorkout);
-
-  const startNew = () => { setF(emptyWorkout); setEditingId(null); setShowForm(true); };
-  const startEdit = (w) => { setF({ assignedCoacheeIds: [], type: "training", ...w }); setEditingId(w.id); setShowForm(true); };
-  const addBlock = (type) => setF((prev) => ({ ...prev, groups: [...prev.groups, { id: uid(), type, rounds: 1, items: [] }] }));
-  const removeBlock = (gid) => setF((prev) => ({ ...prev, groups: prev.groups.filter((g) => g.id !== gid) }));
-  const updateBlockRounds = (gid, rounds) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, rounds } : g)) }));
-  const addItemToBlock = (gid, exerciseId) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", sets: [{ reps: "", weight: "", distance: "", unit: "kg" }] }] } : g)) }));
-  const removeItem = (gid, itemId) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.filter((i) => i.id !== itemId) } : g)) }));
-  const updateItemSets = (gid, itemId, sets) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, sets } : i)) } : g)) }));
-  const updateItemRest = (gid, itemId, restSeconds) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, restSeconds } : i)) } : g)) }));
-  const updateItemUnit = (gid, itemId, unit) => setF((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, unit, sets: i.sets.map((s) => ({ ...s, unit })) } : i)) } : g)) }));
-  const toggleAssignedCoachee = (id) => setF((prev) => ({ ...prev, assignedCoacheeIds: prev.assignedCoacheeIds.includes(id) ? prev.assignedCoacheeIds.filter((x) => x !== id) : [...prev.assignedCoacheeIds, id] }));
-
-  const save = () => {
-    if (!f.name.trim()) return;
-    if (editingId) setWorkouts(workouts.map((w) => (w.id === editingId ? { ...f, id: editingId } : w)));
-    else setWorkouts([...workouts, { ...f, id: uid() }]);
-    setShowForm(false);
-  };
-  const remove = (id) => setWorkouts(workouts.filter((w) => w.id !== id));
-
-  return (
-    <div>
-      {!showForm ? (
-        <>
-          <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Workouts</h3><button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Workout</button></div>
-          {workouts.length === 0 && <p className="ptlog-muted">Noch keine Workouts angelegt.</p>}
-          <ul className="ptlog-entry-list">
-            {workouts.map((w) => (
-              <li key={w.id} onClick={() => startEdit(w)} style={{ cursor: "pointer" }}>
-                <div>
-                  <strong>{w.name}</strong>{w.isBaseline && <span className="ptlog-tag-mini">Ist-Stand</span>}{w.type && w.type !== "training" && <span className="ptlog-tag-mini">{WORKOUT_TYPES.find(([k]) => k === w.type)?.[1]}</span>}
-                  <div className="ptlog-entry-macros">
-                    {w.groups.reduce((s, g) => s + g.items.length, 0)} Übungen · {(!w.assignedCoacheeIds || w.assignedCoacheeIds.length === 0) ? "für alle Coachees" : `zugeordnet: ${w.assignedCoacheeIds.map((id) => coachees.find((c) => c.id === id)?.name).filter(Boolean).join(", ")}`}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <div>
-          <div className="ptlog-card-header-row"><h3>{editingId ? "Workout bearbeiten" : "Neues Workout"}</h3><button className="ptlog-btn" onClick={() => setShowForm(false)}><X size={14} /></button></div>
-          {profile && <p className="ptlog-goal-banner">Ziel des Coachees: <strong>{GOAL_LABELS[profile.goalType] || profile.goalType}</strong>{profile.goals ? ` — ${profile.goals}` : ""}</p>}
-          <div className="ptlog-grid-2">
-            <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-            <Field label="Art"><select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>{WORKOUT_TYPES.map(([k, l]) => (<option key={k} value={k}>{l}</option>))}</select></Field>
-          </div>
-          <label className="ptlog-checkbox"><input type="checkbox" checked={f.isBaseline} onChange={(e) => setF({ ...f, isBaseline: e.target.checked })} /> als Ist-Stand-Test markieren</label>
-          <Field label="Hinweis für den Coachee"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-          <Field label="Zugeordnete Coachees (leer = für alle sichtbar)">
-            <div className="ptlog-tag-picker">
-              {coachees.length === 0 && <span className="ptlog-muted" style={{ fontSize: 12 }}>Noch keine Coachees angelegt.</span>}
-              {coachees.map((c) => (
-                <button type="button" key={c.id} className={"ptlog-tag-btn" + (f.assignedCoacheeIds.includes(c.id) ? " active" : "")} onClick={() => toggleAssignedCoachee(c.id)}>{c.name}</button>
-              ))}
-            </div>
-          </Field>
-
-          {f.groups.map((g, gi) => {
-            const superset = isSuperset(g);
-            return (
-            <div key={g.id} className="ptlog-block-card">
-              <div className="ptlog-row-between">
-                <strong>{superset ? "Super Set" : "Normaler Satz"} {gi + 1}</strong>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {superset && <input type="number" min="1" value={g.rounds} onChange={(e) => updateBlockRounds(g.id, e.target.value)} style={{ width: 56 }} />}
-                  {superset && <span className="ptlog-muted" style={{ fontSize: 12 }}>Runden</span>}
-                  <button className="ptlog-btn-x" onClick={() => removeBlock(g.id)}><X size={14} /></button>
-                </div>
-              </div>
-              {g.items.map((item, ii) => {
-                const ex = exercises.find((e) => e.id === item.exerciseId);
-                return (
-                  <div key={item.id} className="ptlog-block-item">
-                    <div className="ptlog-row-between">
-                      <span>{superset ? String.fromCharCode(65 + ii) + " · " : ""}{ex ? ex.name : "?"}</span>
-                      <button className="ptlog-btn-x" onClick={() => removeItem(g.id, item.id)}><X size={13} /></button>
-                    </div>
-                    <div className="ptlog-mode-tabs" style={{ margin: "4px 0" }}>
-                      <button type="button" className={"ptlog-mode-btn" + ((item.unit || "kg") === "kg" ? " active" : "")} onClick={() => updateItemUnit(g.id, item.id, "kg")}>kg</button>
-                      <button type="button" className={"ptlog-mode-btn" + (item.unit === "min" ? " active" : "")} onClick={() => updateItemUnit(g.id, item.id, "min")}>Minuten</button>
-                    </div>
-                    <SetRowsEditor sets={item.sets} unit={item.unit || "kg"} onChange={(sets) => updateItemSets(g.id, item.id, sets)} />
-                    <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
-                      <span>Pause zwischen Sätzen (Sek.)</span>
-                      <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(g.id, item.id, Number(e.target.value))} />
-                    </div>
-                  </div>
-                );
-              })}
-              {(superset || g.items.length === 0) && (
-                <ExercisePicker exercises={exercises} profile={profile} onPick={(exId) => addItemToBlock(g.id, exId)} placeholder="Übung zu diesem Block hinzufügen…" />
-              )}
-            </div>
-            );
-          })}
-          <div className="ptlog-add-row">
-            <button className="ptlog-btn" type="button" onClick={() => addBlock("normal")}><Plus size={14} /> Normaler Satz</button>
-            <button className="ptlog-btn" type="button" onClick={() => addBlock("superset")}><Plus size={14} /> Supersatz</button>
-          </div>
-          <div className="ptlog-add-row">
-            <button className="ptlog-btn primary" onClick={save}>Workout speichern</button>
-            {editingId && <button className="ptlog-btn" onClick={() => { remove(editingId); setShowForm(false); }} style={{ color: COLORS.warn }}>Löschen</button>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+const WEEKDAY_ABBR = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const WEEKDAY_FULL = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+function emptyPlanDays() {
+  return WEEKDAY_FULL.map((name, idx) => ({
+    id: uid(), weekday: idx, label: WEEKDAY_ABBR[idx].toLowerCase() + ".",
+    isRestDay: true, sessionName: "", isBaseline: false, groups: [],
+  }));
 }
 
 /* ================= Druckbare Planansicht ("PDF" via Browser-Druck) ================= */
-function PrintablePlan({ plan, workouts, exercises, coacheeName }) {
+function PrintablePlan({ plan, exercises, coacheeName }) {
   return (
     <div className="ptlog-print-only">
       <h1>{plan.name}</h1>
       {coacheeName && <p>Für: {coacheeName}</p>}
-      {plan.days.map((d) => {
-        const workout = workouts.find((w) => w.id === d.workoutId);
-        return (
-          <div key={d.id} className="ptlog-print-day">
-            <h2>{d.label ? `${d.label} · ` : ""}{workout ? workout.name : "Ruhetag"}</h2>
-            {workout && workout.note && <p><em>{workout.note}</em></p>}
-            {workout && workout.groups.map((g) => (
-              <div key={g.id}>
-                {isSuperset(g) && <p><strong>Super Set · {g.rounds} Runden</strong></p>}
-                <ul>
-                  {g.items.map((item) => {
-                    const ex = exercises.find((e) => e.id === item.exerciseId);
-                    const sets = d.overrides?.[item.id]?.sets || item.sets;
-                    return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget({ sets })}</li>);
-                  })}
-                </ul>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {plan.days.map((d) => (
+        <div key={d.id} className="ptlog-print-day">
+          <h2>{WEEKDAY_FULL[d.weekday]}{d.isRestDay ? " · Ruhetag" : d.sessionName ? ` · ${d.sessionName}` : ""}</h2>
+          {!d.isRestDay && d.groups.map((g) => (
+            <div key={g.id}>
+              {isSuperset(g) && <p><strong>Super Set · {g.rounds} Runden</strong></p>}
+              <ul>
+                {g.items.map((item) => {
+                  const ex = exercises.find((e) => e.id === item.exerciseId);
+                  return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget(item)}</li>);
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
 
-const WEEKDAY_ABBR = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActivate, coacheeName }) {
+/* ================= Trainingspläne — direkt mit Inhalt pro Tag (Coach) ================= */
+function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeName }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expandedDayId, setExpandedDayId] = useState(null);
   const [printPlan, setPrintPlan] = useState(null);
-  const emptyPlan = { name: "", days: [] };
-  const [f, setF] = useState(emptyPlan);
-  const availableWorkouts = workouts.filter((w) => !w.assignedCoacheeIds || w.assignedCoacheeIds.length === 0 || w.assignedCoacheeIds.includes(coacheeId));
+  const [f, setF] = useState({ name: "", days: emptyPlanDays() });
 
-  const startNew = () => {
-    setF({ name: "", days: WEEKDAY_ABBR.map((w, idx) => ({ id: uid(), label: w.toLowerCase() + ".", weekday: idx, workoutId: "", overrides: {} })) });
-    setEditingId(null); setShowForm(true); setExpandedDayId(null);
-  };
+  const startNew = () => { setF({ name: "", days: emptyPlanDays() }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
   const startEdit = (p) => { setF({ ...p }); setEditingId(p.id); setShowForm(true); setExpandedDayId(null); };
   const duplicatePlan = (p) => { setF({ ...p, name: p.name + " (Kopie)" }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
-  const addDay = () => setF((prev) => ({ ...prev, days: [...prev.days, { id: uid(), label: "", weekday: null, workoutId: "", overrides: {} }] }));
-  const updateDay = (id, key, val) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === id ? { ...d, [key]: val } : d)) }));
-  const setDayWeekday = (id, idx) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === id ? { ...d, weekday: idx, label: WEEKDAY_ABBR[idx].toLowerCase() + "." } : d)) }));
-  const removeDay = (id) => setF((prev) => ({ ...prev, days: prev.days.filter((d) => d.id !== id) }));
-  const updateDayOverride = (dayId, itemId, sets) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === dayId ? { ...d, overrides: { ...(d.overrides || {}), [itemId]: { sets } } } : d)) }));
-  const resetDayOverride = (dayId, itemId) => setF((prev) => ({ ...prev, days: prev.days.map((d) => { if (d.id !== dayId) return d; const next = { ...(d.overrides || {}) }; delete next[itemId]; return { ...d, overrides: next }; }) }));
+
+  const updateDay = (dayId, updater) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === dayId ? updater(d) : d)) }));
+  const toggleRestDay = (dayId) => updateDay(dayId, (d) => ({ ...d, isRestDay: !d.isRestDay }));
+  const setDayField = (dayId, key, val) => updateDay(dayId, (d) => ({ ...d, [key]: val }));
+  const addBlock = (dayId, type) => updateDay(dayId, (d) => ({ ...d, groups: [...d.groups, { id: uid(), type, purpose: "training", rounds: 1, items: [] }] }));
+  const removeBlock = (dayId, gid) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.filter((g) => g.id !== gid) }));
+  const updateBlockRounds = (dayId, gid, rounds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, rounds } : g)) }));
+  const updateBlockPurpose = (dayId, gid, purpose) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, purpose } : g)) }));
+  const addItemToBlock = (dayId, gid, exerciseId) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", sets: [{ reps: "", weight: "", distance: "", unit: "kg" }] }] } : g)) }));
+  const removeItem = (dayId, gid, itemId) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.filter((i) => i.id !== itemId) } : g)) }));
+  const updateItemSets = (dayId, gid, itemId, sets) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, sets } : i)) } : g)) }));
+  const updateItemRest = (dayId, gid, itemId, restSeconds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, restSeconds } : i)) } : g)) }));
+  const updateItemUnit = (dayId, gid, itemId, unit) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, unit, sets: i.sets.map((s) => ({ ...s, unit })) } : i)) } : g)) }));
 
   const save = () => {
     if (!f.name.trim()) return;
@@ -2457,10 +2367,11 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
   const remove = (id) => setPlans(plans.filter((p) => p.id !== id));
   const activate = (id) => { setPlans(plans.map((p) => ({ ...p, active: p.id === id }))); onActivate && onActivate(id); };
   const triggerPrint = (p) => { setPrintPlan(p); setTimeout(() => window.print(), 80); };
+  const dayExerciseCount = (d) => d.groups.reduce((s, g) => s + g.items.length, 0);
 
   return (
     <div>
-      {printPlan && <PrintablePlan plan={printPlan} workouts={workouts} exercises={exercises} coacheeName={coacheeName} />}
+      {printPlan && <PrintablePlan plan={printPlan} exercises={exercises} coacheeName={coacheeName} />}
       {!showForm ? (
         <>
           <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div>
@@ -2468,7 +2379,10 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
           <ul className="ptlog-entry-list">
             {plans.map((p) => (
               <li key={p.id}>
-                <div onClick={() => startEdit(p)} style={{ cursor: "pointer" }}><strong>{p.name}</strong>{p.active && <span className="ptlog-tag-mini good">aktiv</span>}<div className="ptlog-entry-macros">{p.days.length} Tage</div></div>
+                <div onClick={() => startEdit(p)} style={{ cursor: "pointer" }}>
+                  <strong>{p.name}</strong>{p.active && <span className="ptlog-tag-mini good">aktiv</span>}
+                  <div className="ptlog-entry-macros">{(p.days || []).filter((d) => !d.isRestDay).length} Trainingstage/Woche</div>
+                </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button className="ptlog-btn-x" onClick={() => duplicatePlan(p)} aria-label="Duplizieren"><Copy size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => triggerPrint(p)} aria-label="Drucken / als PDF speichern"><Printer size={15} /></button>
@@ -2481,53 +2395,91 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
       ) : (
         <div>
           <div className="ptlog-card-header-row"><h3>{editingId ? "Plan bearbeiten" : "Neuer Plan"}</h3><button className="ptlog-btn" onClick={() => setShowForm(false)}><X size={14} /></button></div>
-          <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Alle 7 Wochentage sind schon als Ruhetag vorausgefüllt — einfach die passenden Tage mit Workouts belegen. Für eine neue Woche kannst du in der Liste einen bestehenden Plan über <Copy size={11} style={{ verticalAlign: "-1px" }} /> duplizieren, statt neu aufzubauen. Zielwerte lassen sich pro Tag für diesen Coachee anpassen, ohne die Vorlage für andere zu verändern.</p>
+          <Field label="Name des Plans"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="z. B. Aufbauphase September" /></Field>
+          {profile && <p className="ptlog-goal-banner">Ziel des Coachees: <strong>{GOAL_LABELS[profile.goalType] || profile.goalType}</strong>{profile.goals ? ` — ${profile.goals}` : ""}</p>}
+          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Für jeden Tag festlegen, was zu tun ist, oder als Ruhetag lassen. Für eine neue Woche einen bestehenden Plan über <Copy size={11} style={{ verticalAlign: "-1px" }} /> duplizieren statt neu aufzubauen.</p>
+
           {f.days.map((d) => {
-            const workout = workouts.find((w) => w.id === d.workoutId);
-            const items = workout ? workout.groups.flatMap((g) => g.items) : [];
+            const exCount = dayExerciseCount(d);
+            const expanded = expandedDayId === d.id;
             return (
-              <div key={d.id}>
-                <div className="ptlog-day-row">
-                  <div className="ptlog-weekday-picker">{WEEKDAY_ABBR.map((w, idx) => (<button type="button" key={w} className={"ptlog-weekday-btn" + (d.weekday === idx ? " active" : "")} onClick={() => setDayWeekday(d.id, idx)}>{w}</button>))}</div>
-                  <input placeholder="Bezeichnung" value={d.label} onChange={(e) => updateDay(d.id, "label", e.target.value)} style={{ width: 110 }} />
-                  <select value={d.workoutId} onChange={(e) => updateDay(d.id, "workoutId", e.target.value)}>
-                    <option value="">Ruhetag</option>
-                    {WORKOUT_TYPES.map(([tk, tl]) => {
-                      const group = availableWorkouts.filter((w) => (w.type || "training") === tk);
-                      return group.length > 0 ? (<optgroup key={tk} label={tl}>{group.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}</optgroup>) : null;
-                    })}
-                  </select>
-                  <button className="ptlog-btn-x" onClick={() => removeDay(d.id)}><X size={14} /></button>
+              <div key={d.id} className="ptlog-day-card">
+                <div className="ptlog-day-card-header" onClick={() => setExpandedDayId(expanded ? null : d.id)}>
+                  <div>
+                    <strong>{WEEKDAY_FULL[d.weekday]}</strong>
+                    <div className="ptlog-entry-macros">{d.isRestDay ? "Ruhetag" : `${d.sessionName || "Training"} · ${exCount} Übung${exCount !== 1 ? "en" : ""}`}</div>
+                  </div>
+                  <ChevronDown size={16} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
                 </div>
-                {workout && items.length > 0 && (
-                  <div style={{ marginLeft: 4, marginBottom: 8 }}>
-                    <button type="button" className="ptlog-btn" style={{ fontSize: 11, padding: "5px 10px" }} onClick={() => setExpandedDayId(expandedDayId === d.id ? null : d.id)}>
-                      {expandedDayId === d.id ? "Anpassung schließen" : `Für ${WEEKDAY_ABBR[d.weekday] ?? "diesen Tag"} anpassen`}
-                    </button>
-                    {expandedDayId === d.id && (
-                      <div className="ptlog-block-card" style={{ marginTop: 6 }}>
-                        {items.map((item) => {
-                          const currentSets = d.overrides?.[item.id]?.sets || item.sets;
-                          const overridden = !!d.overrides?.[item.id];
+                {expanded && (
+                  <div className="ptlog-day-card-body">
+                    <label className="ptlog-checkbox" style={{ marginBottom: 10 }}>
+                      <input type="checkbox" checked={d.isRestDay} onChange={() => toggleRestDay(d.id)} /> Ruhetag
+                    </label>
+                    {!d.isRestDay && (
+                      <>
+                        <div className="ptlog-grid-2">
+                          <Field label="Bezeichnung (z. B. Brusttraining, Laufen)"><input value={d.sessionName} onChange={(e) => setDayField(d.id, "sessionName", e.target.value)} /></Field>
+                          <label className="ptlog-checkbox" style={{ alignSelf: "center" }}>
+                            <input type="checkbox" checked={d.isBaseline} onChange={(e) => setDayField(d.id, "isBaseline", e.target.checked)} /> Ist-Stand-Test
+                          </label>
+                        </div>
+
+                        {d.groups.map((g, gi) => {
+                          const superset = isSuperset(g);
                           return (
-                            <div key={item.id} className="ptlog-block-item">
+                            <div key={g.id} className="ptlog-block-card">
                               <div className="ptlog-row-between">
-                                <span>{overridden ? "🔧 " : ""}Übung {items.indexOf(item) + 1}{overridden ? " (individuell)" : " (Vorlage)"}</span>
-                                {overridden && <button className="ptlog-btn" type="button" style={{ fontSize: 11 }} onClick={() => resetDayOverride(d.id, item.id)}>Zurücksetzen</button>}
+                                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                  <strong>{superset ? "Super Set" : "Übung"} {gi + 1}</strong>
+                                  <select value={g.purpose || "training"} onChange={(e) => updateBlockPurpose(d.id, g.id, e.target.value)} style={{ width: "auto", fontSize: 12, padding: "4px 8px" }}>
+                                    {WORKOUT_TYPES.map(([k, l]) => (<option key={k} value={k}>{l}</option>))}
+                                  </select>
+                                </div>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  {superset && <input type="number" min="1" value={g.rounds} onChange={(e) => updateBlockRounds(d.id, g.id, e.target.value)} style={{ width: 56 }} />}
+                                  {superset && <span className="ptlog-muted" style={{ fontSize: 12 }}>Runden</span>}
+                                  <button className="ptlog-btn-x" onClick={() => removeBlock(d.id, g.id)}><X size={14} /></button>
+                                </div>
                               </div>
-                              <SetRowsEditor sets={currentSets} unit={item.unit || "kg"} onChange={(sets) => updateDayOverride(d.id, item.id, sets)} />
+                              {g.items.map((item, ii) => {
+                                const ex = exercises.find((e) => e.id === item.exerciseId);
+                                return (
+                                  <div key={item.id} className="ptlog-block-item">
+                                    <div className="ptlog-row-between">
+                                      <span>{superset ? String.fromCharCode(65 + ii) + " · " : ""}{ex ? ex.name : "?"}</span>
+                                      <button className="ptlog-btn-x" onClick={() => removeItem(d.id, g.id, item.id)}><X size={13} /></button>
+                                    </div>
+                                    <div className="ptlog-mode-tabs" style={{ margin: "4px 0" }}>
+                                      <button type="button" className={"ptlog-mode-btn" + ((item.unit || "kg") === "kg" ? " active" : "")} onClick={() => updateItemUnit(d.id, g.id, item.id, "kg")}>kg</button>
+                                      <button type="button" className={"ptlog-mode-btn" + (item.unit === "min" ? " active" : "")} onClick={() => updateItemUnit(d.id, g.id, item.id, "min")}>Minuten</button>
+                                    </div>
+                                    <SetRowsEditor sets={item.sets} unit={item.unit || "kg"} onChange={(sets) => updateItemSets(d.id, g.id, item.id, sets)} />
+                                    <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
+                                      <span>Pause zwischen Sätzen (Sek.)</span>
+                                      <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(d.id, g.id, item.id, Number(e.target.value))} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {(superset || g.items.length === 0) && (
+                                <ExerciseSelect exercises={exercises} onPick={(exId) => addItemToBlock(d.id, g.id, exId)} placeholder="Übung auswählen…" />
+                              )}
                             </div>
                           );
                         })}
-                      </div>
+                        <div className="ptlog-add-row">
+                          <button className="ptlog-btn" type="button" onClick={() => addBlock(d.id, "normal")}><Plus size={13} /> Übung</button>
+                          <button className="ptlog-btn" type="button" onClick={() => addBlock(d.id, "superset")}><Plus size={13} /> Supersatz</button>
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
               </div>
             );
           })}
-          <button className="ptlog-btn" type="button" onClick={addDay}><Plus size={13} /> Tag</button>
+
           <div className="ptlog-add-row">
             <button className="ptlog-btn primary" onClick={save}>Plan speichern</button>
             {editingId && <button className="ptlog-btn" onClick={() => { remove(editingId); setShowForm(false); }} style={{ color: COLORS.warn }}>Löschen</button>}
@@ -2539,7 +2491,7 @@ function PlanManager({ plans, setPlans, workouts, exercises, coacheeId, onActiva
 }
 
 /* ================= Trainingsplanung — Coachee (Ausführung) ================= */
-function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions, setExercises, flash }) {
+function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExercises, flash }) {
   const [homeTab, setHomeTab] = useState("plan"); // plan | start | history
   const [view, setView] = useState("home"); // home | day | session
   const [activeDay, setActiveDay] = useState(null);
@@ -2561,12 +2513,13 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
     return () => clearTimeout(t);
   }, [restTimer]);
 
-  const startWorkout = (workout) => {
+  const startDaySession = (day) => {
     const session = {
-      id: uid(), workoutId: workout.id, workoutName: workout.name, planId: activePlan?.id || null, date: todayISO(), startedAt: new Date().toISOString(),
-      entries: workout.groups.flatMap((g) => g.items.map((item) => ({
+      id: uid(), planDayId: day.id, workoutName: day.sessionName || WEEKDAY_FULL[day.weekday], planId: activePlan?.id || null,
+      isBaseline: !!day.isBaseline, date: todayISO(), startedAt: new Date().toISOString(),
+      entries: day.groups.flatMap((g) => g.items.map((item) => ({
         id: uid(), exerciseId: item.exerciseId, groupId: g.id, restSeconds: item.restSeconds ?? 90,
-        sets: item.sets.map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", rpe: "", pain: false, done: false })),
+        sets: item.sets.map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", unit: item.unit || "kg", rpe: "", pain: false, done: false })),
         clientNote: "",
       }))),
     };
@@ -2574,7 +2527,7 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
     setView("session");
   };
   const startEmptyWorkout = () => {
-    setActiveSession({ id: uid(), workoutId: null, workoutName: "Freies Workout", planId: null, date: todayISO(), startedAt: new Date().toISOString(), entries: [] });
+    setActiveSession({ id: uid(), planDayId: null, workoutName: "Freies Workout", planId: null, isBaseline: false, date: todayISO(), startedAt: new Date().toISOString(), entries: [] });
     setView("session");
   };
   const addAdHocExercise = (exerciseId) => {
@@ -2594,7 +2547,6 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
   const updateEntryNote = (entryId, note) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, clientNote: note } : e)) }));
 
   const finishSession = () => {
-    const workout = workouts.find((w) => w.id === activeSession.workoutId);
     const finishedAt = new Date().toISOString();
     const durationSeconds = Math.round((new Date(finishedAt) - new Date(activeSession.startedAt)) / 1000);
     const volume = sessionVolume(activeSession);
@@ -2604,9 +2556,9 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
       const newMax = Math.max(0, ...e.sets.map((s) => Number(s.weight) || 0));
       if (newMax > 0 && newMax > prevMax) prCount += 1;
     });
-    const finalSession = { ...activeSession, finishedAt, durationSeconds, volume, prCount, isBaseline: !!workout?.isBaseline };
+    const finalSession = { ...activeSession, finishedAt, durationSeconds, volume, prCount };
     setSessions([...sessions, finalSession]);
-    if (workout?.isBaseline) {
+    if (activeSession.isBaseline) {
       setExercises(exercises.map((ex) => {
         const entry = activeSession.entries.find((e) => e.exerciseId === ex.id);
         if (!entry) return ex;
@@ -2620,30 +2572,31 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
   };
 
   if (view === "day" && activeDay) {
-    const workout = activeDay.workout;
-    const allMuscles = [...new Set(workout.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)).filter(Boolean).flatMap((e) => e.muscles)))];
+    const day = activeDay.day;
+    const allMuscles = [...new Set(day.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)).filter(Boolean).flatMap((e) => e.muscles)))];
     return (
       <div className="ptlog-section" style={{ paddingBottom: 70 }}>
         <button className="ptlog-btn" onClick={() => setView("home")} style={{ marginBottom: 10 }}><ChevronLeft size={14} /> zurück</button>
-        <h2>{activeDay.label ? `${activeDay.label} ` : ""}{workout.name}</h2>
-        {workout.note && <p className="ptlog-muted">{workout.note}</p>}
+        <h2>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h2>
         {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
-        {workout.groups.map((g) => (
-          <div key={g.id} className="ptlog-block-card">
-            {isSuperset(g) && <div className="ptlog-muted" style={{ fontSize: 12, marginBottom: 6 }}>Super Set · {g.rounds} Runde{g.rounds != 1 ? "n" : ""}</div>}
-            {g.items.map((item, ii) => {
-              const ex = exercises.find((e) => e.id === item.exerciseId);
-              return (
-                <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
-                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
-                  <div className="ptlog-exercise-info"><strong>{ex ? ex.name : "?"}</strong><span className="ptlog-muted">{summarizeItemTarget(item)}</span></div>
-                  {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-        <button className="ptlog-btn primary wide sticky-bottom" onClick={() => startWorkout(workout)}>Trainingseinheit beginnen</button>
+        <div className="ptlog-block-card">
+          {day.groups.map((g, gi) => (
+            <div key={g.id} className={gi > 0 ? "ptlog-block-divider" : ""}>
+              {isSuperset(g) && <div className="ptlog-muted" style={{ fontSize: 12, margin: "6px 0" }}>Super Set · {g.rounds} Runde{g.rounds != 1 ? "n" : ""}</div>}
+              {g.items.map((item, ii) => {
+                const ex = exercises.find((e) => e.id === item.exerciseId);
+                return (
+                  <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
+                    <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                    <div className="ptlog-exercise-info"><strong>{ex ? ex.name : "?"}</strong><span className="ptlog-muted">{summarizeItemTarget(item)}</span></div>
+                    {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <button className="ptlog-btn primary wide sticky-bottom" onClick={() => startDaySession(day)}>Trainingseinheit beginnen</button>
         {modalExerciseId && <ExerciseDetailModal exercise={exercises.find((e) => e.id === modalExerciseId)} sessions={sessions} onClose={() => setModalExerciseId(null)} />}
       </div>
     );
@@ -2666,7 +2619,7 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
                 <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                 <strong>{ex ? ex.name : "?"}</strong>
               </div>
-              {activeSession.workoutId === null && (
+              {activeSession.planDayId === null && (
                 <div className="ptlog-mode-tabs" style={{ margin: "0 0 6px" }}>
                   <button type="button" className={"ptlog-mode-btn" + ((entry.unit || "kg") === "kg" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "kg")}>kg</button>
                   <button type="button" className={"ptlog-mode-btn" + (entry.unit === "min" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "min")}>Minuten</button>
@@ -2709,7 +2662,7 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
             </div>
           );
         })}
-        {activeSession.workoutId === null && (
+        {activeSession.planDayId === null && (
           <div className="ptlog-block-card">
             <ExercisePicker exercises={exercises} onPick={addAdHocExercise} placeholder="Übung hinzufügen…" />
           </div>
@@ -2746,14 +2699,13 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
             <p className="ptlog-muted" style={{ marginTop: -8, marginBottom: 14 }}>{activePlan.name} — Planübersicht</p>
             <ul className="ptlog-plan-days">
               {activePlan.days.map((d) => {
-                const workout = workouts.find((w) => w.id === d.workoutId);
-                const exCount = workout ? workout.groups.reduce((s, g) => s + g.items.length, 0) : 0;
-                const setCount = workout ? workout.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0) : 0;
+                const exCount = d.groups.reduce((s, g) => s + g.items.length, 0);
+                const setCount = d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
                 return (
-                  <li key={d.id} className="ptlog-plan-day" onClick={() => { if (workout) { setActiveDay({ label: d.label, workout: resolveWorkoutForDay(workout, d) }); setView("day"); } }} style={{ cursor: workout ? "pointer" : "default" }}>
+                  <li key={d.id} className="ptlog-plan-day" onClick={() => { if (!d.isRestDay) { setActiveDay({ day: d }); setView("day"); } }} style={{ cursor: d.isRestDay ? "default" : "pointer" }}>
                     <div className="ptlog-plan-day-thumb"><Dumbbell size={18} /></div>
-                    <div className="ptlog-plan-day-info"><strong>{d.label}{workout ? ` ${workout.name}` : ""}</strong><span className="ptlog-muted">{workout ? `${exCount} Übung${exCount !== 1 ? "en" : ""}` : "Ruhetag"}</span></div>
-                    {workout && <span className="ptlog-muted">{setCount} Sätze</span>}
+                    <div className="ptlog-plan-day-info"><strong>{d.label} {!d.isRestDay && (d.sessionName || "Training")}</strong><span className="ptlog-muted">{!d.isRestDay ? `${exCount} Übung${exCount !== 1 ? "en" : ""}` : "Ruhetag"}</span></div>
+                    {!d.isRestDay && <span className="ptlog-muted">{setCount} Sätze</span>}
                   </li>
                 );
               })}
@@ -2765,62 +2717,64 @@ function CoacheeTrainingView({ plans, workouts, exercises, sessions, setSessions
       {homeTab === "start" && (
         <>
           <button className="ptlog-btn primary wide" onClick={startEmptyWorkout} style={{ marginBottom: 16 }}>Ein leeres Workout beginnen</button>
-          {workouts.length === 0 ? (<p className="ptlog-muted">Dein Coach hat noch keine Workouts angelegt.</p>) : (
-            WORKOUT_TYPES.map(([tk, tl]) => {
-              const group = workouts.filter((w) => (w.type || "training") === tk);
-              if (group.length === 0) return null;
-              return (
-                <div key={tk} style={{ marginBottom: 18 }}>
-                  <h3 style={{ fontFamily: "'Sora',sans-serif", fontSize: 15, margin: "0 0 10px" }}>{tk === "training" ? "Vorlagen" : tl}</h3>
-                  <div className="ptlog-template-grid">
-                    {group.map((w) => {
-                      const exCount = w.groups.reduce((s, g) => s + g.items.length, 0);
-                      const names = w.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)?.name).filter(Boolean)).join(", ");
-                      return (
-                        <div key={w.id} className="ptlog-template-card" onClick={() => { setActiveDay({ label: "", workout: w }); setView("day"); }}>
-                          <strong>{w.name}</strong>
-                          <span className="ptlog-muted" style={{ fontSize: 12 }}>{exCount} Übung{exCount !== 1 ? "en" : ""}</span>
-                          <span className="ptlog-muted" style={{ fontSize: 12 }}>{names.slice(0, 60)}{names.length > 60 ? "…" : ""}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })
+          {!activePlan || activePlan.days.every((d) => d.isRestDay) ? (
+            <p className="ptlog-muted">Dein Coach hat noch keine Trainingstage im aktiven Plan angelegt.</p>
+          ) : (
+            <>
+              <h3 style={{ fontFamily: "'Sora',sans-serif", fontSize: 15, margin: "0 0 10px" }}>Tage aus deinem Plan</h3>
+              <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Falls du z. B. den Mittwochs-Tag lieber am Donnerstag machst.</p>
+              <div className="ptlog-template-grid">
+                {activePlan.days.filter((d) => !d.isRestDay).map((d) => {
+                  const exCount = d.groups.reduce((s, g) => s + g.items.length, 0);
+                  const names = d.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)?.name).filter(Boolean)).join(", ");
+                  return (
+                    <div key={d.id} className="ptlog-template-card" onClick={() => { setActiveDay({ day: d }); setView("day"); }}>
+                      <strong>{d.label} {d.sessionName || "Training"}</strong>
+                      <span className="ptlog-muted" style={{ fontSize: 12 }}>{exCount} Übung{exCount !== 1 ? "en" : ""}</span>
+                      <span className="ptlog-muted" style={{ fontSize: 12 }}>{names.slice(0, 60)}{names.length > 60 ? "…" : ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </>
       )}
 
-      {homeTab === "history" && (
-        sessions.length === 0 ? (<p className="ptlog-muted">Noch keine Trainingseinheit abgeschlossen.</p>) : (
-          <div>
-            {[...sessions].sort((a, b) => (b.finishedAt || b.date).localeCompare(a.finishedAt || a.date)).map((s, i, arr) => {
-              const showMonthHeader = i > 0 && monthLabel(s.date) !== monthLabel(arr[i - 1].date);
-              return (
-                <React.Fragment key={s.id}>
-                  {showMonthHeader && <div className="ptlog-history-group-label">{monthLabel(s.date)}</div>}
-                  <div className="ptlog-history-card">
-                    <strong>{s.workoutName}</strong>
-                    <span className="ptlog-muted">{formatLongDate(s.date)}</span>
-                    <div className="ptlog-history-stats">
-                      <span>{formatDuration(s.durationSeconds)}</span>
-                      <span>{formatVolume(s.volume || sessionVolume(s))}</span>
-                      <span>{s.prCount || 0} PRs</span>
-                    </div>
-                    <div className="ptlog-history-exercises">
-                      {s.entries.map((e) => {
-                        const ex = exercises.find((x) => x.id === e.exerciseId);
-                        return (<div key={e.id} className="ptlog-history-exercise-row"><span>{e.sets.length} × {ex ? ex.name : "?"}</span><span>{bestSetText(e)}</span></div>);
-                      })}
-                    </div>
-                  </div>
-                </React.Fragment>
-              );
-            })}
-          </div>
-        )
-      )}
+      {homeTab === "history" && <SessionHistoryList sessions={sessions} exercises={exercises} />}
+    </div>
+  );
+}
+
+function SessionHistoryList({ sessions, exercises, limit }) {
+  const sorted = [...sessions].sort((a, b) => (b.finishedAt || b.date).localeCompare(a.finishedAt || a.date));
+  const list = limit ? sorted.slice(0, limit) : sorted;
+  if (list.length === 0) return <p className="ptlog-muted">Noch keine Trainingseinheit abgeschlossen.</p>;
+  return (
+    <div>
+      {list.map((s, i, arr) => {
+        const showMonthHeader = i > 0 && monthLabel(s.date) !== monthLabel(arr[i - 1].date);
+        return (
+          <React.Fragment key={s.id}>
+            {showMonthHeader && <div className="ptlog-history-group-label">{monthLabel(s.date)}</div>}
+            <div className="ptlog-history-card">
+              <strong>{s.workoutName}</strong>
+              <span className="ptlog-muted">{formatLongDate(s.date)}</span>
+              <div className="ptlog-history-stats">
+                <span>{formatDuration(s.durationSeconds)}</span>
+                <span>{formatVolume(s.volume || sessionVolume(s))}</span>
+                <span>{s.prCount || 0} PRs</span>
+              </div>
+              <div className="ptlog-history-exercises">
+                {s.entries.map((e) => {
+                  const ex = exercises.find((x) => x.id === e.exerciseId);
+                  return (<div key={e.id} className="ptlog-history-exercise-row"><span>{e.sets.length} × {ex ? ex.name : "?"}</span><span>{bestSetText(e)}</span></div>);
+                })}
+              </div>
+            </div>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -3134,6 +3088,10 @@ const CSS = `
 .ptlog-image-upload { width: 60px; height: 60px; border-radius: 8px; border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; color: var(--muted); cursor: pointer; }
 
 .ptlog-block-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface2); }
+.ptlog-block-divider { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.ptlog-day-card { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; background: var(--surface2); }
+.ptlog-day-card-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; cursor: pointer; }
+.ptlog-day-card-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 .ptlog-block-item { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: 13px; }
 .ptlog-setrows { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .ptlog-setrow { display: grid; grid-template-columns: 70px 60px 1fr 26px; gap: 6px; align-items: center; }
@@ -3195,6 +3153,8 @@ const CSS = `
 .ptlog-cal-cell.status-deviated { border-color: var(--accent); }
 .ptlog-cal-cell.status-missed { border-color: var(--warn); background: rgba(255,107,107,0.1); }
 .ptlog-cal-cell.status-missed .ptlog-cal-dot { background: var(--warn); }
+.ptlog-cal-cell.status-caughtup { border-color: #5EA8E0; }
+.ptlog-cal-cell.status-caughtup .ptlog-cal-dot { background: #5EA8E0; }
 .ptlog-cal-cell.status-restday { opacity: 0.55; }
 .ptlog-week-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 12px; }
 .ptlog-week-chip { font-size: 10px; padding: 3px 7px; border-radius: 999px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
