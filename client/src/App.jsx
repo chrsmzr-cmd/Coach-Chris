@@ -33,6 +33,7 @@ import {
   Ruler,
   Copy,
   Trash2,
+  Clock,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -797,10 +798,20 @@ export default function CoachingLogbuch() {
   const updateCustomFoods = useCallback(async (next) => { setCustomFoods(next); await saveKey("customfoods", next); }, []);
   const updateExercises = useCallback(async (next) => { setExercisesState(next); await saveKey("exercises", next); }, []);
   const updatePlans = useCallback(async (next) => { setPlansState(next); await saveKey(`plans-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
+
+  useEffect(() => {
+    if (!selectedCoacheeId || plans.length === 0) return;
+    const today = todayISO();
+    const due = plans.filter((p) => p.scheduledActivationDate && p.scheduledActivationDate <= today).sort((a, b) => b.scheduledActivationDate.localeCompare(a.scheduledActivationDate))[0];
+    if (!due || due.active) return;
+    const next = plans.map((p) => ({ ...p, active: p.id === due.id, scheduledActivationDate: p.id === due.id ? null : p.scheduledActivationDate }));
+    updatePlans(next);
+    recordPlanActivation(due.id, due.scheduledActivationDate);
+  }, [plans, selectedCoacheeId, updatePlans, recordPlanActivation]);
   const updateSessions = useCallback(async (next) => { setSessionsState(next); await saveKey(`sessions-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
-  const recordPlanActivation = useCallback(async (planId) => {
+  const recordPlanActivation = useCallback(async (planId, date) => {
     setPlanHistoryState((prev) => {
-      const next = [...prev, { planId, date: todayISO() }];
+      const next = [...prev, { planId, date: date || todayISO() }];
       saveKey(`planhistory-${selectedCoacheeId}`, next);
       return next;
     });
@@ -2341,6 +2352,8 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const [editingId, setEditingId] = useState(null);
   const [expandedDayId, setExpandedDayId] = useState(null);
   const [printPlan, setPrintPlan] = useState(null);
+  const [schedulingId, setSchedulingId] = useState(null);
+  const [scheduleDate, setScheduleDate] = useState(todayISO());
   const [f, setF] = useState({ name: "", days: emptyPlanDays() });
 
   const startNew = () => { setF({ name: "", days: emptyPlanDays() }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
@@ -2368,7 +2381,9 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
     setShowForm(false);
   };
   const remove = (id) => setPlans(plans.filter((p) => p.id !== id));
-  const activate = (id) => { setPlans(plans.map((p) => ({ ...p, active: p.id === id }))); onActivate && onActivate(id); };
+  const activate = (id) => { setPlans(plans.map((p) => ({ ...p, active: p.id === id, scheduledActivationDate: p.id === id ? null : p.scheduledActivationDate }))); onActivate && onActivate(id); };
+  const setSchedule = (id, date) => setPlans(plans.map((p) => (p.id === id ? { ...p, scheduledActivationDate: date } : p)));
+  const clearSchedule = (id) => setPlans(plans.map((p) => (p.id === id ? { ...p, scheduledActivationDate: null } : p)));
   const triggerPrint = (p) => { setPrintPlan(p); setTimeout(() => window.print(), 80); };
   const dayExerciseCount = (d) => d.groups.reduce((s, g) => s + g.items.length, 0);
   const daySetCount = (d) => d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
@@ -2382,16 +2397,30 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
           {plans.length === 0 && <p className="ptlog-muted">Noch kein Plan angelegt.</p>}
           <ul className="ptlog-entry-list">
             {plans.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} style={{ flexWrap: "wrap" }}>
                 <div onClick={() => startEdit(p)} style={{ cursor: "pointer" }}>
                   <strong>{p.name}</strong>{p.active && <span className="ptlog-tag-mini good">aktiv</span>}
                   <div className="ptlog-entry-macros">{(p.days || []).filter((d) => !d.isRestDay).length} Trainingstage/Woche</div>
+                  {p.scheduledActivationDate && <div className="ptlog-schedule-badge">🕒 aktiviert sich automatisch am {fmtDate(p.scheduledActivationDate)}</div>}
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                   <button className="ptlog-btn-x" onClick={() => duplicatePlan(p)} aria-label="Duplizieren"><Copy size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => triggerPrint(p)} aria-label="Drucken / als PDF speichern"><Printer size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => { if (window.confirm(`Plan "${p.name}" wirklich löschen?`)) remove(p.id); }} aria-label="Löschen" style={{ color: COLORS.warn }}><Trash2 size={15} /></button>
-                  {!p.active && <button className="ptlog-btn" onClick={() => activate(p.id)}>aktivieren</button>}
+                  {!p.active && p.scheduledActivationDate && (
+                    <button className="ptlog-btn-x" onClick={() => clearSchedule(p.id)} aria-label="Geplante Aktivierung aufheben"><X size={15} /></button>
+                  )}
+                  {!p.active && !p.scheduledActivationDate && schedulingId !== p.id && (
+                    <button className="ptlog-btn-x" onClick={() => { setSchedulingId(p.id); setScheduleDate(todayISO()); }} aria-label="Aktivierung planen"><Clock size={15} /></button>
+                  )}
+                  {!p.active && schedulingId === p.id && (
+                    <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} style={{ width: 140 }} />
+                      <button className="ptlog-btn" onClick={() => { setSchedule(p.id, scheduleDate); setSchedulingId(null); }}>Planen</button>
+                      <button className="ptlog-btn-x" onClick={() => setSchedulingId(null)}><X size={13} /></button>
+                    </span>
+                  )}
+                  {!p.active && <button className="ptlog-btn" onClick={() => activate(p.id)}>jetzt aktivieren</button>}
                 </div>
               </li>
             ))}
@@ -2508,6 +2537,9 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
   const [activeSession, setActiveSession] = useState(null);
   const [modalExerciseId, setModalExerciseId] = useState(null);
   const [restTimer, setRestTimer] = useState(null); // {entryId, remaining, total}
+  const [pendingFeedback, setPendingFeedback] = useState(null);
+  const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackComment, setFeedbackComment] = useState("");
   const [nowTick, setNowTick] = useState(Date.now());
   const activePlan = plans.find((p) => p.active);
 
@@ -2567,7 +2599,6 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       if (newMax > 0 && newMax > prevMax) prCount += 1;
     });
     const finalSession = { ...activeSession, finishedAt, durationSeconds, volume, prCount };
-    setSessions([...sessions, finalSession]);
     if (activeSession.isBaseline) {
       setExercises(exercises.map((ex) => {
         const entry = activeSession.entries.find((e) => e.exerciseId === ex.id);
@@ -2575,11 +2606,41 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
         return { ...ex, baseline: { date: activeSession.date, sets: entry.sets.map((s) => ({ reps: s.reps, weight: s.weight, distance: s.distance })) } };
       }));
     }
+    setPendingFeedback(finalSession);
+    setFeedbackRating(0);
+    setFeedbackComment("");
+    setView("feedback");
+  };
+
+  const submitFeedback = (skip) => {
+    const withFeedback = skip ? pendingFeedback : { ...pendingFeedback, feedback: { rating: feedbackRating || null, comment: feedbackComment.trim() || null } };
+    setSessions([...sessions, withFeedback]);
     flash("Trainingseinheit gespeichert");
+    setPendingFeedback(null);
     setActiveSession(null);
     setRestTimer(null);
     setView("home");
   };
+
+  if (view === "feedback" && pendingFeedback) {
+    return (
+      <div className="ptlog-section" style={{ paddingBottom: 70 }}>
+        <h2>Wie war das Training?</h2>
+        <p className="ptlog-muted" style={{ marginTop: -8 }}>{pendingFeedback.workoutName} · {formatDuration(pendingFeedback.durationSeconds)}</p>
+        <div className="ptlog-card">
+          <div className="ptlog-checkin-row">
+            <span>Gefühl</span>
+            <div className="ptlog-checkin-scale">
+              {[1, 2, 3, 4, 5].map((n) => (<button key={n} type="button" className={"ptlog-checkin-dot" + (feedbackRating === n ? " active" : "")} onClick={() => setFeedbackRating(n)}>{n}</button>))}
+            </div>
+          </div>
+          <Field label="Kommentar (optional)"><textarea rows={3} value={feedbackComment} onChange={(e) => setFeedbackComment(e.target.value)} placeholder="z. B. lief gut, Schulter hat gezwickt, war heute zäh…" /></Field>
+        </div>
+        <button className="ptlog-btn primary wide sticky-bottom" onClick={() => submitFeedback(false)}>Feedback speichern</button>
+        <button className="ptlog-btn wide" style={{ marginTop: 8 }} onClick={() => submitFeedback(true)}>Ohne Feedback speichern</button>
+      </div>
+    );
+  }
 
   if (view === "day" && activeDay) {
     const day = activeDay.day;
@@ -2786,6 +2847,12 @@ function SessionHistoryList({ sessions, exercises, limit }) {
                   return (<div key={e.id} className="ptlog-history-exercise-row"><span>{e.sets.length} × {ex ? ex.name : "?"}</span><span>{bestSetText(e)}</span></div>);
                 })}
               </div>
+              {s.feedback && (s.feedback.rating || s.feedback.comment) && (
+                <div className="ptlog-history-feedback">
+                  {s.feedback.rating && <span>Gefühl: {s.feedback.rating}/5</span>}
+                  {s.feedback.comment && <span className="ptlog-muted">„{s.feedback.comment}"</span>}
+                </div>
+              )}
             </div>
           </React.Fragment>
         );
@@ -3207,6 +3274,8 @@ const CSS = `
 .ptlog-history-stats { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
 .ptlog-history-exercises { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--border); padding-top: 8px; }
 .ptlog-history-exercise-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.ptlog-history-feedback { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; }
+.ptlog-schedule-badge { font-size: 11px; color: var(--accent); margin-top: 2px; }
 
 /* Avatar */
 .ptlog-avatar-display { border-radius: 50%; padding: 4px; display: flex; align-items: center; justify-content: center; position: relative; flex-shrink: 0; }
