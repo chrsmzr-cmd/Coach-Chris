@@ -2371,6 +2371,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const activate = (id) => { setPlans(plans.map((p) => ({ ...p, active: p.id === id }))); onActivate && onActivate(id); };
   const triggerPrint = (p) => { setPrintPlan(p); setTimeout(() => window.print(), 80); };
   const dayExerciseCount = (d) => d.groups.reduce((s, g) => s + g.items.length, 0);
+  const daySetCount = (d) => d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
 
   return (
     <div>
@@ -2405,13 +2406,14 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
 
           {f.days.map((d) => {
             const exCount = dayExerciseCount(d);
+            const setCount = daySetCount(d);
             const expanded = expandedDayId === d.id;
             return (
               <div key={d.id} className="ptlog-day-card">
                 <div className="ptlog-day-card-header" onClick={() => setExpandedDayId(expanded ? null : d.id)}>
                   <div>
                     <strong>{WEEKDAY_FULL[d.weekday]}</strong>
-                    <div className="ptlog-entry-macros">{d.isRestDay ? "Ruhetag" : `${d.sessionName || "Training"} · ${exCount} Übung${exCount !== 1 ? "en" : ""}`}</div>
+                    <div className="ptlog-entry-macros">{d.isRestDay ? "Ruhetag" : `${d.sessionName || "Training"} · ${exCount} Übung${exCount !== 1 ? "en" : ""} · ${setCount} Satz${setCount !== 1 ? "e" : ""}`}</div>
                   </div>
                   <ChevronDown size={16} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
                 </div>
@@ -2717,8 +2719,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                 return (
                   <li key={d.id} className="ptlog-plan-day" onClick={() => { if (!d.isRestDay) { setActiveDay({ day: d }); setView("day"); } }} style={{ cursor: d.isRestDay ? "default" : "pointer" }}>
                     <div className="ptlog-plan-day-thumb"><Dumbbell size={18} /></div>
-                    <div className="ptlog-plan-day-info"><strong>{d.label} {!d.isRestDay && (d.sessionName || "Training")}</strong><span className="ptlog-muted">{!d.isRestDay ? `${exCount} Übung${exCount !== 1 ? "en" : ""}` : "Ruhetag"}</span></div>
-                    {!d.isRestDay && <span className="ptlog-muted">{setCount} Sätze</span>}
+                    <div className="ptlog-plan-day-info"><strong>{d.label} {!d.isRestDay && (d.sessionName || "Training")}</strong><span className="ptlog-muted">{!d.isRestDay ? `${exCount} Übung${exCount !== 1 ? "en" : ""} · ${setCount} Satz${setCount !== 1 ? "e" : ""}` : "Ruhetag"}</span></div>
                   </li>
                 );
               })}
@@ -2739,11 +2740,12 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
               <div className="ptlog-template-grid">
                 {activePlan.days.filter((d) => !d.isRestDay).map((d) => {
                   const exCount = d.groups.reduce((s, g) => s + g.items.length, 0);
+                  const setCount = d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
                   const names = d.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)?.name).filter(Boolean)).join(", ");
                   return (
                     <div key={d.id} className="ptlog-template-card" onClick={() => { setActiveDay({ day: d }); setView("day"); }}>
                       <strong>{d.label} {d.sessionName || "Training"}</strong>
-                      <span className="ptlog-muted" style={{ fontSize: 12 }}>{exCount} Übung{exCount !== 1 ? "en" : ""}</span>
+                      <span className="ptlog-muted" style={{ fontSize: 12 }}>{exCount} Übung{exCount !== 1 ? "en" : ""} · {setCount} Satz{setCount !== 1 ? "e" : ""}</span>
                       <span className="ptlog-muted" style={{ fontSize: 12 }}>{names.slice(0, 60)}{names.length > 60 ? "…" : ""}</span>
                     </div>
                   );
