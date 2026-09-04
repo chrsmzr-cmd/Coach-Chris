@@ -32,6 +32,7 @@ import {
   Printer,
   Ruler,
   Copy,
+  Trash2,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -70,7 +71,7 @@ function guessEquipment(name) {
   return "Körpergewicht";
 }
 const SEED_RAW = [
-  ["Ab Wheel", "Bauch/Rumpf"], ["Aerobics", "Cardio"], ["Arnold Press (Dumbbell)", "Schultern"], ["Around the World", "Brust"],
+  ["Ab Wheel", "Bauch/Rumpf"], ["Aerobic", "Cardio"], ["Arnold Press (Dumbbell)", "Schultern"], ["Around the World", "Brust"],
   ["Back Extension", "Rücken"], ["Back Extension (Machine)", "Rücken"], ["Ball Slams", "Ganzkörper"], ["Battle Ropes", "Cardio"],
   ["Bench Dip", "Arme"], ["Bench Press (Barbell)", "Brust"], ["Bench Press (Cable)", "Brust"], ["Bench Press (Dumbbell)", "Brust"],
   ["Bench Press (Smith Machine)", "Brust"], ["Bench Press - Close Grip (Barbell)", "Arme"], ["Bench Press - Wide Grip (Barbell)", "Brust"],
@@ -82,25 +83,25 @@ const SEED_RAW = [
   ["Calf Press on Leg Press", "Beine"], ["Calf Press on Seated Leg Press", "Beine"],
   ["Chest Dip", "Brust"], ["Chest Dip (Assisted)", "Brust"], ["Chest Fly", "Brust"], ["Chest Fly (Band)", "Brust"], ["Chest Fly (Dumbbell)", "Brust"],
   ["Chest Press (Band)", "Brust"], ["Chest Press (Machine)", "Brust"], ["Chin Up", "Rücken"], ["Chin Up (Assisted)", "Rücken"],
-  ["Clean (Barbell)", "Olympisch"], ["Clean and Jerk (Barbell)", "Olympisch"], ["Climbing", "Cardio"], ["Concentration Curl (Dumbbell)", "Arme"],
+  ["Clean (Barbell)", "Olympisch"], ["Clean and Jerk (Barbell)", "Olympisch"], ["Klettern", "Cardio"], ["Concentration Curl (Dumbbell)", "Arme"],
   ["Cross Body Crunch", "Bauch/Rumpf"], ["Crunch", "Bauch/Rumpf"], ["Crunch (Machine)", "Bauch/Rumpf"], ["Crunch (Stability Ball)", "Bauch/Rumpf"],
-  ["Cycling", "Cardio"], ["Cycling (Indoor)", "Cardio"],
+  ["Radfahren", "Cardio"], ["Radfahren (Indoor)", "Cardio"],
   ["Deadlift (Band)", "Beine"], ["Deadlift (Barbell)", "Rücken"], ["Deadlift (Dumbbell)", "Beine"], ["Deadlift (Smith Machine)", "Beine"],
   ["Deadlift High Pull (Barbell)", "Olympisch"], ["Decline Bench Press (Barbell)", "Brust"], ["Decline Bench Press (Dumbbell)", "Brust"],
   ["Decline Bench Press (Smith Machine)", "Brust"], ["Decline Crunch", "Bauch/Rumpf"], ["Deficit Deadlift (Barbell)", "Beine"],
-  ["Elliptical Machine", "Cardio"], ["Face Pull (Cable)", "Schultern"], ["Flat Knee Raise", "Bauch/Rumpf"], ["Flat Leg Raise", "Bauch/Rumpf"],
+  ["Crosstrainer", "Cardio"], ["Face Pull (Cable)", "Schultern"], ["Flat Knee Raise", "Bauch/Rumpf"], ["Flat Leg Raise", "Bauch/Rumpf"],
   ["Floor Press (Barbell)", "Brust"], ["Front Raise (Band)", "Schultern"], ["Front Raise (Barbell)", "Schultern"], ["Front Raise (Cable)", "Schultern"],
   ["Front Raise (Dumbbell)", "Schultern"], ["Front Raise (Plate)", "Schultern"], ["Front Squat (Barbell)", "Beine"],
   ["Glute Ham Raise", "Beine"], ["Glute Kickback (Machine)", "Beine"], ["Goblet Squat (Kettlebell)", "Beine"], ["Good Morning (Barbell)", "Rücken"],
   ["Hack Squat", "Beine"], ["Hack Squat (Barbell)", "Beine"], ["Hammer Curl (Band)", "Arme"], ["Hammer Curl (Cable)", "Arme"], ["Hammer Curl (Dumbbell)", "Arme"],
   ["Handstand Push Up", "Schultern"], ["Hang Clean (Barbell)", "Olympisch"], ["Hang Snatch (Barbell)", "Olympisch"],
-  ["Hanging Knee Raise", "Bauch/Rumpf"], ["Hanging Leg Raise", "Bauch/Rumpf"], ["High Knee Skips", "Beine"], ["Hiking", "Cardio"],
+  ["Hanging Knee Raise", "Bauch/Rumpf"], ["Hanging Leg Raise", "Bauch/Rumpf"], ["High Knee Skips", "Beine"], ["Wandern", "Cardio"],
   ["Hip Abductor (Machine)", "Beine"], ["Hip Adductor (Machine)", "Beine"], ["Hip Thrust (Barbell)", "Beine"], ["Hip Thrust (Bodyweight)", "Beine"],
   ["Incline Bench Press (Barbell)", "Brust"], ["Incline Bench Press (Cable)", "Brust"], ["Incline Bench Press (Dumbbell)", "Brust"],
   ["Incline Bench Press (Smith Machine)", "Brust"], ["Incline Chest Fly (Dumbbell)", "Brust"], ["Incline Chest Press (Machine)", "Brust"],
   ["Incline Curl (Dumbbell)", "Arme"], ["Incline Row (Dumbbell)", "Rücken"], ["Inverted Row (Bodyweight)", "Rücken"],
   ["Iso-Lateral Chest Press (Machine)", "Brust"], ["Iso-Lateral Row (Machine)", "Rücken"],
-  ["Jackknife Sit Up", "Bauch/Rumpf"], ["Jump Rope", "Cardio"], ["Jump Shrug (Barbell)", "Olympisch"], ["Jump Squat", "Beine"], ["Jumping Jack", "Ganzkörper"],
+  ["Jackknife Sit Up", "Bauch/Rumpf"], ["Seilspringen", "Cardio"], ["Jump Shrug (Barbell)", "Olympisch"], ["Jump Squat", "Beine"], ["Jumping Jack", "Ganzkörper"],
   ["Kettlebell Swing", "Ganzkörper"], ["Kettlebell Turkish Get Up", "Ganzkörper"], ["Kipping Pull Up", "Rücken"],
   ["Knee Raise (Captain's Chair)", "Bauch/Rumpf"], ["Kneeling Pulldown (Band)", "Rücken"], ["Knees to Elbows", "Bauch/Rumpf"],
   ["Lat Pulldown (Cable)", "Rücken"], ["Lat Pulldown (Machine)", "Rücken"], ["Lat Pulldown (Single Arm)", "Rücken"],
@@ -122,7 +123,7 @@ const SEED_RAW = [
   ["Reverse Fly (Cable)", "Schultern"], ["Reverse Fly (Dumbbell)", "Schultern"], ["Reverse Fly (Machine)", "Schultern"],
   ["Reverse Grip Concentration Curl (Dumbbell)", "Arme"], ["Reverse Plank", "Bauch/Rumpf"],
   ["Romanian Deadlift (Barbell)", "Rücken"], ["Romanian Deadlift (Dumbbell)", "Beine"],
-  ["Rowing (Machine)", "Cardio"], ["Running", "Cardio"], ["Running (Treadmill)", "Cardio"], ["Russian Twist", "Bauch/Rumpf"],
+  ["Rudern (Gerät)", "Cardio"], ["Laufen", "Cardio"], ["Laufen (Laufband)", "Cardio"], ["Russian Twist", "Bauch/Rumpf"],
   ["Seated Calf Raise (Machine)", "Beine"], ["Seated Calf Raise (Plate Loaded)", "Beine"],
   ["Seated Leg Curl (Machine)", "Beine"], ["Seated Leg Press (Machine)", "Beine"],
   ["Seated Overhead Press (Barbell)", "Schultern"], ["Seated Overhead Press (Dumbbell)", "Schultern"],
@@ -132,8 +133,8 @@ const SEED_RAW = [
   ["Shrug (Barbell)", "Schultern"], ["Shrug (Dumbbell)", "Schultern"], ["Shrug (Machine)", "Schultern"], ["Shrug (Smith Machine)", "Schultern"],
   ["Side Bend (Band)", "Bauch/Rumpf"], ["Side Bend (Cable)", "Bauch/Rumpf"], ["Side Bend (Dumbbell)", "Bauch/Rumpf"],
   ["Side Plank", "Bauch/Rumpf"], ["Single Leg Bridge", "Beine"], ["Sit Up", "Bauch/Rumpf"],
-  ["Skating", "Cardio"], ["Skiing", "Cardio"], ["Skullcrusher (Barbell)", "Arme"], ["Skullcrusher (Dumbbell)", "Arme"],
-  ["Snatch (Barbell)", "Olympisch"], ["Snatch Pull (Barbell)", "Olympisch"], ["Snowboarding", "Cardio"], ["Split Jerk (Barbell)", "Olympisch"],
+  ["Skaten", "Cardio"], ["Skifahren", "Cardio"], ["Skullcrusher (Barbell)", "Arme"], ["Skullcrusher (Dumbbell)", "Arme"],
+  ["Snatch (Barbell)", "Olympisch"], ["Snatch Pull (Barbell)", "Olympisch"], ["Snowboarden", "Cardio"], ["Split Jerk (Barbell)", "Olympisch"],
   ["Squat (Band)", "Beine"], ["Squat (Barbell)", "Beine"], ["Squat (Bodyweight)", "Beine"], ["Squat (Dumbbell)", "Beine"],
   ["Squat (Machine)", "Beine"], ["Squat (Smith Machine)", "Beine"], ["Squat Row (Band)", "Ganzkörper"],
   ["Standing Calf Raise (Barbell)", "Beine"], ["Standing Calf Raise (Bodyweight)", "Beine"], ["Standing Calf Raise (Dumbbell)", "Beine"],
@@ -141,14 +142,14 @@ const SEED_RAW = [
   ["Stiff Leg Deadlift (Barbell)", "Rücken"], ["Stiff Leg Deadlift (Dumbbell)", "Beine"], ["Straight Leg Deadlift (Band)", "Beine"],
   ["Stretching", "Sonstiges"], ["Strict Military Press (Barbell)", "Schultern"],
   ["Sumo Deadlift (Barbell)", "Rücken"], ["Sumo Deadlift High Pull (Barbell)", "Ganzkörper"],
-  ["Superman", "Bauch/Rumpf"], ["Swimming", "Cardio"], ["T Bar Row", "Rücken"],
+  ["Superman", "Bauch/Rumpf"], ["Schwimmen", "Cardio"], ["T Bar Row", "Rücken"],
   ["Thruster (Barbell)", "Ganzkörper"], ["Thruster (Kettlebell)", "Ganzkörper"],
   ["Toes To Bar", "Bauch/Rumpf"], ["Torso Rotation (Machine)", "Bauch/Rumpf"], ["Trap Bar Deadlift", "Beine"],
   ["Triceps Dip", "Arme"], ["Triceps Dip (Assisted)", "Arme"], ["Triceps Extension", "Arme"], ["Triceps Extension (Barbell)", "Arme"],
   ["Triceps Extension (Cable)", "Arme"], ["Triceps Extension (Dumbbell)", "Arme"], ["Triceps Extension (Machine)", "Arme"],
   ["Triceps Press", "Arme"], ["Triceps Pushdown (Cable - Straight Bar)", "Arme"],
   ["Upright Row (Barbell)", "Schultern"], ["Upright Row (Cable)", "Schultern"], ["Upright Row (Dumbbell)", "Schultern"],
-  ["V Up", "Bauch/Rumpf"], ["Walking", "Cardio"], ["Wall Balls", "Beine"], ["Wide Pull Up", "Rücken"], ["Wrist Roller", "Arme"],
+  ["V Up", "Bauch/Rumpf"], ["Gehen", "Cardio"], ["Wall Balls", "Beine"], ["Wide Pull Up", "Rücken"], ["Wrist Roller", "Arme"],
   ["Yoga", "Cardio"], ["Zercher Squat (Barbell)", "Beine"],
 ];
 const SEED_EXERCISES = SEED_RAW.map(([name, category], i) => ({
@@ -330,11 +331,12 @@ function fileToDataUrl(file) {
 /* ---------- Zielangaben formatieren ---------- */
 function formatSetTarget(s) {
   const unit = s.unit === "min" ? "Min" : "kg";
-  if (s.distance) return s.distance;
-  if (s.reps && s.weight) return `${s.reps} × ${s.weight} ${unit}`;
-  if (s.reps) return `${s.reps} Wdh.`;
-  if (s.weight) return `${s.weight} ${unit}`;
-  return "–";
+  const parts = [];
+  if (s.reps && s.weight) parts.push(`${s.reps} × ${s.weight} ${unit}`);
+  else if (s.reps) parts.push(`${s.reps} Wdh.`);
+  else if (s.weight) parts.push(`${s.weight} ${unit}`);
+  if (s.distance) parts.push(s.distance);
+  return parts.length ? parts.join(" · ") : "–";
 }
 function formatLoggedSet(s) {
   const base = formatSetTarget(s);
@@ -2322,7 +2324,7 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
               <ul>
                 {g.items.map((item) => {
                   const ex = exercises.find((e) => e.id === item.exerciseId);
-                  return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget(item)}</li>);
+                  return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget(item)}{item.note ? ` (${item.note})` : ""}</li>);
                 })}
               </ul>
             </div>
@@ -2352,11 +2354,12 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const removeBlock = (dayId, gid) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.filter((g) => g.id !== gid) }));
   const updateBlockRounds = (dayId, gid, rounds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, rounds } : g)) }));
   const updateBlockPurpose = (dayId, gid, purpose) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, purpose } : g)) }));
-  const addItemToBlock = (dayId, gid, exerciseId) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", sets: [{ reps: "", weight: "", distance: "", unit: "kg" }] }] } : g)) }));
+  const addItemToBlock = (dayId, gid, exerciseId) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: [...g.items, { id: uid(), exerciseId, restSeconds: 90, unit: "kg", note: "", sets: [{ reps: "", weight: "", distance: "", unit: "kg" }] }] } : g)) }));
   const removeItem = (dayId, gid, itemId) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.filter((i) => i.id !== itemId) } : g)) }));
   const updateItemSets = (dayId, gid, itemId, sets) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, sets } : i)) } : g)) }));
   const updateItemRest = (dayId, gid, itemId, restSeconds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, restSeconds } : i)) } : g)) }));
   const updateItemUnit = (dayId, gid, itemId, unit) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, unit, sets: i.sets.map((s) => ({ ...s, unit })) } : i)) } : g)) }));
+  const updateItemNote = (dayId, gid, itemId, note) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, note } : i)) } : g)) }));
 
   const save = () => {
     if (!f.name.trim()) return;
@@ -2386,6 +2389,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
                 <div style={{ display: "flex", gap: 6 }}>
                   <button className="ptlog-btn-x" onClick={() => duplicatePlan(p)} aria-label="Duplizieren"><Copy size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => triggerPrint(p)} aria-label="Drucken / als PDF speichern"><Printer size={15} /></button>
+                  <button className="ptlog-btn-x" onClick={() => { if (window.confirm(`Plan "${p.name}" wirklich löschen?`)) remove(p.id); }} aria-label="Löschen" style={{ color: COLORS.warn }}><Trash2 size={15} /></button>
                   {!p.active && <button className="ptlog-btn" onClick={() => activate(p.id)}>aktivieren</button>}
                 </div>
               </li>
@@ -2455,6 +2459,10 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
                                       <button type="button" className={"ptlog-mode-btn" + (item.unit === "min" ? " active" : "")} onClick={() => updateItemUnit(d.id, g.id, item.id, "min")}>Minuten</button>
                                     </div>
                                     <SetRowsEditor sets={item.sets} unit={item.unit || "kg"} onChange={(sets) => updateItemSets(d.id, g.id, item.id, sets)} />
+                                    <div className="ptlog-field" style={{ marginTop: 6 }}>
+                                      <span>Notiz für den Coachee (z. B. Ausführungshinweis)</span>
+                                      <textarea rows={2} value={item.note || ""} onChange={(e) => updateItemNote(d.id, g.id, item.id, e.target.value)} placeholder="z. B. locker traben, auf saubere Technik achten…" />
+                                    </div>
                                     <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
                                       <span>Pause zwischen Sätzen (Sek.)</span>
                                       <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(d.id, g.id, item.id, Number(e.target.value))} />
@@ -2482,7 +2490,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
 
           <div className="ptlog-add-row">
             <button className="ptlog-btn primary" onClick={save}>Plan speichern</button>
-            {editingId && <button className="ptlog-btn" onClick={() => { remove(editingId); setShowForm(false); }} style={{ color: COLORS.warn }}>Löschen</button>}
+            {editingId && <button className="ptlog-btn" onClick={() => { if (window.confirm(`Plan "${f.name}" wirklich löschen?`)) { remove(editingId); setShowForm(false); } }} style={{ color: COLORS.warn }}>Löschen</button>}
           </div>
         </div>
       )}
@@ -2518,7 +2526,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       id: uid(), planDayId: day.id, workoutName: day.sessionName || WEEKDAY_FULL[day.weekday], planId: activePlan?.id || null,
       isBaseline: !!day.isBaseline, date: todayISO(), startedAt: new Date().toISOString(),
       entries: day.groups.flatMap((g) => g.items.map((item) => ({
-        id: uid(), exerciseId: item.exerciseId, groupId: g.id, restSeconds: item.restSeconds ?? 90,
+        id: uid(), exerciseId: item.exerciseId, groupId: g.id, restSeconds: item.restSeconds ?? 90, coachNote: item.note || "",
         sets: item.sets.map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", unit: item.unit || "kg", rpe: "", pain: false, done: false })),
         clientNote: "",
       }))),
@@ -2588,7 +2596,11 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                 return (
                   <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
                     <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
-                    <div className="ptlog-exercise-info"><strong>{ex ? ex.name : "?"}</strong><span className="ptlog-muted">{summarizeItemTarget(item)}</span></div>
+                    <div className="ptlog-exercise-info">
+                      <strong>{ex ? ex.name : "?"}</strong>
+                      <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
+                      {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
+                    </div>
                     {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
                   </div>
                 );
@@ -2619,6 +2631,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                 <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                 <strong>{ex ? ex.name : "?"}</strong>
               </div>
+              {entry.coachNote && <div className="ptlog-coach-note-banner">📝 {entry.coachNote}</div>}
               {activeSession.planDayId === null && (
                 <div className="ptlog-mode-tabs" style={{ margin: "0 0 6px" }}>
                   <button type="button" className={"ptlog-mode-btn" + ((entry.unit || "kg") === "kg" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "kg")}>kg</button>
@@ -3073,6 +3086,8 @@ const CSS = `
 .ptlog-exercise-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .ptlog-exercise-thumb.small { width: 40px; height: 40px; aspect-ratio: unset; border-radius: 8px; flex-shrink: 0; }
 .ptlog-exercise-info { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.ptlog-coach-note { font-size: 12px; color: var(--accent); font-style: italic; }
+.ptlog-coach-note-banner { background: rgba(255,143,94,0.12); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--accent); margin-bottom: 8px; }
 .ptlog-tag-mini { display: inline-block; font-size: 10px; background: rgba(74,222,158,0.16); color: var(--good); padding: 2px 7px; border-radius: 999px; margin-top: 3px; width: fit-content; }
 .ptlog-tag-mini.good { background: rgba(74,222,158,0.16); color: var(--good); }
 
