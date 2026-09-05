@@ -2308,15 +2308,20 @@ function SetRowsEditor({ sets, onChange, unit = "kg" }) {
   const add = () => onChange([...sets, { reps: "", weight: "", distance: "", unit }]);
   const remove = (i) => onChange(sets.filter((_, idx) => idx !== i));
   const unitLabel = unit === "min" ? "Min" : "kg";
+  const showDistance = unit === "min";
   return (
     <div className="ptlog-setrows">
-      <div className="ptlog-setrow-header"><span>Satz</span><span>{unitLabel}</span><span>Wdh.</span><span>Strecke/Zeit</span><span></span></div>
+      <div className="ptlog-setrow-header"><span>Satz</span><span>{unitLabel}</span><span>Wdh.</span><span>{showDistance ? "Strecke/Zeit" : ""}</span><span></span></div>
       {sets.map((s, i) => (
         <div key={i} className="ptlog-setrow">
           <span className="ptlog-muted">{i + 1}</span>
           <input placeholder={unitLabel} type="number" value={s.weight} onChange={(e) => update(i, "weight", e.target.value)} />
           <input placeholder="Wdh." type="number" value={s.reps} onChange={(e) => update(i, "reps", e.target.value)} />
-          <input placeholder="z. B. 2 km" value={s.distance} onChange={(e) => update(i, "distance", e.target.value)} />
+          {showDistance ? (
+            <input placeholder="z. B. 2 km" value={s.distance} onChange={(e) => update(i, "distance", e.target.value)} />
+          ) : (
+            <span></span>
+          )}
           <button className="ptlog-btn-x" type="button" onClick={() => remove(i)} disabled={sets.length === 1}><X size={13} /></button>
         </div>
       ))}
