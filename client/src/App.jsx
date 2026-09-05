@@ -357,6 +357,20 @@ function summarizeItemTarget(item) {
 function isSuperset(g) {
   return g.type ? g.type === "superset" : g.items.length > 1;
 }
+function groupSetCount(g) {
+  const per = g.items.reduce((s, i) => s + i.sets.length, 0);
+  return isSuperset(g) ? per * (g.rounds || 1) : per;
+}
+function dayGroupsSetCount(groups) {
+  return groups.reduce((s, g) => s + groupSetCount(g), 0);
+}
+function expandItemSets(item, g) {
+  const rounds = isSuperset(g) ? (g.rounds || 1) : 1;
+  if (rounds <= 1) return item.sets;
+  const expanded = [];
+  for (let r = 0; r < rounds; r++) expanded.push(...item.sets);
+  return expanded;
+}
 function planIdActiveOn(history, plans, iso) {
   if (history && history.length) {
     const applicable = history.filter((h) => h.date <= iso).sort((a, b) => b.date.localeCompare(a.date));
@@ -2386,7 +2400,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const clearSchedule = (id) => setPlans(plans.map((p) => (p.id === id ? { ...p, scheduledActivationDate: null } : p)));
   const triggerPrint = (p) => { setPrintPlan(p); setTimeout(() => window.print(), 80); };
   const dayExerciseCount = (d) => d.groups.reduce((s, g) => s + g.items.length, 0);
-  const daySetCount = (d) => d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
+  const daySetCount = (d) => dayGroupsSetCount(d.groups);
 
   return (
     <div>
@@ -2561,7 +2575,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       isBaseline: !!day.isBaseline, date: todayISO(), startedAt: new Date().toISOString(),
       entries: day.groups.flatMap((g) => g.items.map((item) => ({
         id: uid(), exerciseId: item.exerciseId, groupId: g.id, restSeconds: item.restSeconds ?? 90, coachNote: item.note || "",
-        sets: item.sets.map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", unit: item.unit || "kg", rpe: "", pain: false, done: false })),
+        sets: expandItemSets(item, g).map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", unit: item.unit || "kg", rpe: "", pain: false, done: false })),
         clientNote: "",
       }))),
     };
@@ -2776,7 +2790,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
             <ul className="ptlog-plan-days">
               {activePlan.days.map((d) => {
                 const exCount = d.groups.reduce((s, g) => s + g.items.length, 0);
-                const setCount = d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
+                const setCount = dayGroupsSetCount(d.groups);
                 return (
                   <li key={d.id} className="ptlog-plan-day" onClick={() => { if (!d.isRestDay) { setActiveDay({ day: d }); setView("day"); } }} style={{ cursor: d.isRestDay ? "default" : "pointer" }}>
                     <div className="ptlog-plan-day-thumb"><Dumbbell size={18} /></div>
@@ -2801,7 +2815,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
               <div className="ptlog-template-grid">
                 {activePlan.days.filter((d) => !d.isRestDay).map((d) => {
                   const exCount = d.groups.reduce((s, g) => s + g.items.length, 0);
-                  const setCount = d.groups.reduce((s, g) => s + g.items.reduce((s2, i) => s2 + i.sets.length, 0), 0);
+                  const setCount = dayGroupsSetCount(d.groups);
                   const names = d.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)?.name).filter(Boolean)).join(", ");
                   return (
                     <div key={d.id} className="ptlog-template-card" onClick={() => { setActiveDay({ day: d }); setView("day"); }}>
@@ -3178,7 +3192,7 @@ const CSS = `
 .ptlog-day-card-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 .ptlog-block-item { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: 13px; }
 .ptlog-setrows { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.ptlog-setrow { display: grid; grid-template-columns: 70px 60px 1fr 26px; gap: 6px; align-items: center; }
+.ptlog-setrow { display: grid; grid-template-columns: 24px 60px 60px 1fr 26px; gap: 8px; align-items: center; }
 
 .ptlog-day-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .ptlog-weekday-picker { display: flex; gap: 3px; }
