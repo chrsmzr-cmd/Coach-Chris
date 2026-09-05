@@ -798,6 +798,14 @@ export default function CoachingLogbuch() {
   const updateCustomFoods = useCallback(async (next) => { setCustomFoods(next); await saveKey("customfoods", next); }, []);
   const updateExercises = useCallback(async (next) => { setExercisesState(next); await saveKey("exercises", next); }, []);
   const updatePlans = useCallback(async (next) => { setPlansState(next); await saveKey(`plans-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
+  const updateSessions = useCallback(async (next) => { setSessionsState(next); await saveKey(`sessions-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
+  const recordPlanActivation = useCallback(async (planId, date) => {
+    setPlanHistoryState((prev) => {
+      const next = [...prev, { planId, date: date || todayISO() }];
+      saveKey(`planhistory-${selectedCoacheeId}`, next);
+      return next;
+    });
+  }, [selectedCoacheeId]);
 
   useEffect(() => {
     if (!selectedCoacheeId || plans.length === 0) return;
@@ -808,14 +816,6 @@ export default function CoachingLogbuch() {
     updatePlans(next);
     recordPlanActivation(due.id, due.scheduledActivationDate);
   }, [plans, selectedCoacheeId, updatePlans, recordPlanActivation]);
-  const updateSessions = useCallback(async (next) => { setSessionsState(next); await saveKey(`sessions-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
-  const recordPlanActivation = useCallback(async (planId, date) => {
-    setPlanHistoryState((prev) => {
-      const next = [...prev, { planId, date: date || todayISO() }];
-      saveKey(`planhistory-${selectedCoacheeId}`, next);
-      return next;
-    });
-  }, [selectedCoacheeId]);
 
   const chooseRole = async (next) => { setRole(next); await saveKey("role", next, false); };
   const leaveRole = async () => {
