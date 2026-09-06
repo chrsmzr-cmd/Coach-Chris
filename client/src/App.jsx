@@ -2382,6 +2382,18 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const updateDay = (dayId, updater) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === dayId ? updater(d) : d)) }));
   const toggleRestDay = (dayId) => updateDay(dayId, (d) => ({ ...d, isRestDay: !d.isRestDay }));
   const setDayField = (dayId, key, val) => updateDay(dayId, (d) => ({ ...d, [key]: val }));
+  const swapDayContent = (dayIdA, targetWeekday) => setF((prev) => {
+    const days = [...prev.days];
+    const ia = days.findIndex((d) => d.id === dayIdA);
+    const ib = days.findIndex((d) => d.weekday === targetWeekday);
+    if (ia === -1 || ib === -1 || ia === ib) return prev;
+    const keys = ["isRestDay", "sessionName", "note", "isBaseline", "groups"];
+    const a = days[ia], b = days[ib];
+    const newA = { ...a }, newB = { ...b };
+    keys.forEach((k) => { newA[k] = b[k]; newB[k] = a[k]; });
+    days[ia] = newA; days[ib] = newB;
+    return { ...prev, days };
+  });
   const addBlock = (dayId, type) => updateDay(dayId, (d) => ({ ...d, groups: [...d.groups, { id: uid(), type, purpose: "training", rounds: 1, items: [] }] }));
   const removeBlock = (dayId, gid) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.filter((g) => g.id !== gid) }));
   const updateBlockRounds = (dayId, gid, rounds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, rounds } : g)) }));
@@ -2450,7 +2462,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
           <div className="ptlog-card-header-row"><h3>{editingId ? "Plan bearbeiten" : "Neuer Plan"}</h3><button className="ptlog-btn" onClick={() => setShowForm(false)}><X size={14} /></button></div>
           <Field label="Name des Plans"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="z. B. Aufbauphase September" /></Field>
           {profile && <p className="ptlog-goal-banner">Ziel des Coachees: <strong>{GOAL_LABELS[profile.goalType] || profile.goalType}</strong>{profile.goals ? ` — ${profile.goals}` : ""}</p>}
-          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Für jeden Tag festlegen, was zu tun ist, oder als Ruhetag lassen. Für eine neue Woche einen bestehenden Plan über <Copy size={11} style={{ verticalAlign: "-1px" }} /> duplizieren statt neu aufzubauen.</p>
+          <p className="ptlog-muted" style={{ marginTop: -6, marginBottom: 10 }}>Für jeden Tag festlegen, was zu tun ist, oder als Ruhetag lassen. Über „↔ verschieben" lässt sich der komplette Trainingsinhalt eines Tages (Übungen, Sätze, Notizen) auf einen anderen Wochentag verlegen — die Inhalte werden getauscht. Für eine neue Woche einen bestehenden Plan über <Copy size={11} style={{ verticalAlign: "-1px" }} /> duplizieren statt neu aufzubauen.</p>
 
           {f.days.map((d) => {
             const exCount = dayExerciseCount(d);
@@ -2463,7 +2475,15 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
                     <strong>{WEEKDAY_FULL[d.weekday]}</strong>
                     <div className="ptlog-entry-macros">{d.isRestDay ? "Ruhetag" : `${d.sessionName || "Training"} · ${exCount} Übung${exCount !== 1 ? "en" : ""} · ${setCount} Satz${setCount !== 1 ? "e" : ""}`}</div>
                   </div>
-                  <ChevronDown size={16} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
+                    {!d.isRestDay && (
+                      <select value="" onChange={(e) => { if (e.target.value !== "") swapDayContent(d.id, Number(e.target.value)); }} title="Auf einen anderen Wochentag verschieben" style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}>
+                        <option value="">↔ verschieben</option>
+                        {WEEKDAY_FULL.map((name, idx) => idx !== d.weekday && (<option key={idx} value={idx}>nach {name}</option>))}
+                      </select>
+                    )}
+                    <ChevronDown size={16} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, cursor: "pointer" }} onClick={() => setExpandedDayId(expanded ? null : d.id)} />
+                  </div>
                 </div>
                 {expanded && (
                   <div className="ptlog-day-card-body">
