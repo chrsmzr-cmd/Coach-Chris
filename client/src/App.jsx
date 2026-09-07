@@ -435,6 +435,12 @@ function previousMaxWeight(sessions, exerciseId) {
 function sessionVolume(session) {
   return session.entries.reduce((sum, e) => sum + e.sets.reduce((s2, s) => s2 + (Number(s.weight) || 0) * (Number(s.reps) || 0), 0), 0);
 }
+function sessionCompletionPercent(session) {
+  const total = session.entries.reduce((s, e) => s + e.sets.length, 0);
+  if (total === 0) return 0;
+  const done = session.entries.reduce((s, e) => s + e.sets.filter((st) => st.done).length, 0);
+  return Math.round((done / total) * 100);
+}
 function computeTopProgress(sessions, exercises, limit = 3) {
   const byExercise = {};
   [...sessions].sort((a, b) => a.date.localeCompare(b.date)).forEach((s) => {
@@ -2797,7 +2803,10 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       <div className="ptlog-section" style={{ paddingBottom: 70 }}>
         <div className="ptlog-row-between">
           <h2 style={{ marginBottom: 0 }}>{activeSession.workoutName}</h2>
-          <span className="ptlog-chip neutral">{formatDuration(elapsed)}</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            <span className="ptlog-chip neutral">{sessionCompletionPercent(activeSession)}% geschafft</span>
+            <span className="ptlog-chip neutral">{formatDuration(elapsed)}</span>
+          </div>
         </div>
         <div className="ptlog-row-between" style={{ marginTop: -6, marginBottom: 8 }}>
           <p className="ptlog-muted" style={{ margin: 0 }}>{fmtDate(activeSession.date)}</p>
@@ -2987,6 +2996,7 @@ function SessionHistoryList({ sessions, exercises, limit, editable, setSessions 
                 <span>{formatDuration(s.durationSeconds)}</span>
                 <span>{formatVolume(s.volume || sessionVolume(s))}</span>
                 <span>{s.prCount || 0} PRs</span>
+                <span className={sessionCompletionPercent(s) >= 100 ? "ptlog-chip good" : "ptlog-chip neutral"} style={{ marginLeft: "auto" }}>{sessionCompletionPercent(s)}% geschafft</span>
               </div>
 
               {isEditing ? (
