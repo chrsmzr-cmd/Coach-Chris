@@ -2351,7 +2351,7 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
           <h2>{WEEKDAY_FULL[d.weekday]}{d.isRestDay ? " · Ruhetag" : d.sessionName ? ` · ${d.sessionName}` : ""}</h2>
           {!d.isRestDay && d.groups.map((g) => (
             <div key={g.id}>
-              {isSuperset(g) && <p><strong>Super Set · {g.rounds} Runden</strong></p>}
+              {isSuperset(g) ? <p><strong>Super Set · {g.rounds} Runden</strong></p> : <p><strong>Regulärer Satz</strong></p>}
               <ul>
                 {g.items.map((item) => {
                   const ex = exercises.find((e) => e.id === item.exerciseId);
@@ -2716,27 +2716,27 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
         <button className="ptlog-btn" onClick={() => setView("home")} style={{ marginBottom: 10 }}><ChevronLeft size={14} /> zurück</button>
         <h2>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h2>
         {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
-        <div className="ptlog-block-card">
-          {day.groups.map((g, gi) => (
-            <div key={g.id} className={gi > 0 ? "ptlog-block-divider" : ""}>
-              {isSuperset(g) && <div className="ptlog-muted" style={{ fontSize: 12, margin: "6px 0" }}>Super Set · {g.rounds} Runde{g.rounds != 1 ? "n" : ""}</div>}
-              {g.items.map((item, ii) => {
-                const ex = exercises.find((e) => e.id === item.exerciseId);
-                return (
-                  <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
-                    <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
-                    <div className="ptlog-exercise-info">
-                      <strong>{ex ? ex.name : "?"}</strong>
-                      <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
-                      {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
-                    </div>
-                    {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
+        {day.groups.map((g, gi) => (
+          <div key={g.id} className="ptlog-block-card ptlog-block-group">
+            <div className={"ptlog-block-group-label" + (isSuperset(g) ? " superset" : "")}>
+              {isSuperset(g) ? `Super Set · ${g.rounds} Runde${g.rounds != 1 ? "n" : ""}` : "Regulärer Satz"}
+            </div>
+            {g.items.map((item, ii) => {
+              const ex = exercises.find((e) => e.id === item.exerciseId);
+              return (
+                <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
+                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                  <div className="ptlog-exercise-info">
+                    <strong>{ex ? ex.name : "?"}</strong>
+                    <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
+                    {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
                   </div>
-                );
+                  {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
+                </div>
+              );
               })}
             </div>
           ))}
-        </div>
         <button className="ptlog-btn primary wide sticky-bottom" onClick={() => startDaySession(day)}>Trainingseinheit beginnen</button>
         {modalExerciseId && <ExerciseDetailModal exercise={exercises.find((e) => e.id === modalExerciseId)} sessions={sessions} onClose={() => setModalExerciseId(null)} />}
       </div>
@@ -3239,6 +3239,9 @@ const CSS = `
 
 .ptlog-block-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface2); }
 .ptlog-block-divider { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.ptlog-block-group { margin-bottom: 12px; }
+.ptlog-block-group-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.ptlog-block-group-label.superset { color: var(--accent); }
 .ptlog-day-card { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; background: var(--surface2); }
 .ptlog-day-card-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; cursor: pointer; }
 .ptlog-day-card-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
