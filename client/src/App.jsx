@@ -34,6 +34,7 @@ import {
   Copy,
   Trash2,
   Clock,
+  Send,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -1982,7 +1983,7 @@ function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, 
         <button className={"ptlog-mode-btn" + (sub === "calendar" ? " active" : "")} onClick={() => setSub("calendar")}>Kalender</button>
       </div>
       <div className="ptlog-card">
-        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} onActivate={onActivatePlan} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
+        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} onActivate={onActivatePlan} coachees={coachees} coacheeId={coacheeId} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
         {sub === "history" && <SessionHistoryList sessions={sessions} exercises={exercises} />}
         {sub === "library" && <ExerciseLibraryManager exercises={exercises} setExercises={setExercises} />}
         {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} planHistory={planHistory} />}
@@ -2366,7 +2367,7 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
 }
 
 /* ================= Trainingspläne — direkt mit Inhalt pro Tag (Coach) ================= */
-function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeName }) {
+function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees, coacheeId, coacheeName }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expandedDayId, setExpandedDayId] = useState(null);
@@ -2378,6 +2379,17 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
   const startNew = () => { setF({ name: "", days: emptyPlanDays() }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
   const startEdit = (p) => { setF({ ...p }); setEditingId(p.id); setShowForm(true); setExpandedDayId(null); };
   const duplicatePlan = (p) => { setF({ ...p, name: p.name + " (Kopie)" }); setEditingId(null); setShowForm(true); setExpandedDayId(null); };
+  const [transferId, setTransferId] = useState(null);
+  const [transferTarget, setTransferTarget] = useState("");
+  const [transferStatus, setTransferStatus] = useState("");
+  const transferPlan = async (plan, targetCoacheeId) => {
+    setTransferStatus("…");
+    const existing = (await loadKey(`plans-${targetCoacheeId}`)) || [];
+    const newPlan = { ...plan, id: uid(), name: plan.name, active: false, scheduledActivationDate: null };
+    await saveKey(`plans-${targetCoacheeId}`, [...existing, newPlan]);
+    setTransferStatus("Übertragen ✓");
+    setTimeout(() => { setTransferId(null); setTransferTarget(""); setTransferStatus(""); }, 1200);
+  };
 
   const updateDay = (dayId, updater) => setF((prev) => ({ ...prev, days: prev.days.map((d) => (d.id === dayId ? updater(d) : d)) }));
   const toggleRestDay = (dayId) => updateDay(dayId, (d) => ({ ...d, isRestDay: !d.isRestDay }));
@@ -2438,6 +2450,21 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coacheeN
                   <button className="ptlog-btn-x" onClick={() => duplicatePlan(p)} aria-label="Duplizieren"><Copy size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => triggerPrint(p)} aria-label="Drucken / als PDF speichern"><Printer size={15} /></button>
                   <button className="ptlog-btn-x" onClick={() => { if (window.confirm(`Plan "${p.name}" wirklich löschen?`)) remove(p.id); }} aria-label="Löschen" style={{ color: COLORS.warn }}><Trash2 size={15} /></button>
+                  {transferId !== p.id && (
+                    <button className="ptlog-btn-x" onClick={() => { setTransferId(p.id); setTransferTarget(""); setTransferStatus(""); }} aria-label="Auf anderen Coachee übertragen"><Send size={15} /></button>
+                  )}
+                  {transferId === p.id && (
+                    <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}>
+                        <option value="">Coachee wählen…</option>
+                        {(coachees || []).filter((c) => c.id !== coacheeId).map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                      </select>
+                      {transferStatus ? <span className="ptlog-muted" style={{ fontSize: 12 }}>{transferStatus}</span> : (
+                        <button className="ptlog-btn" onClick={() => transferTarget && transferPlan(p, transferTarget)} disabled={!transferTarget}>Übertragen</button>
+                      )}
+                      <button className="ptlog-btn-x" onClick={() => setTransferId(null)}><X size={13} /></button>
+                    </span>
+                  )}
                   {!p.active && p.scheduledActivationDate && (
                     <button className="ptlog-btn-x" onClick={() => clearSchedule(p.id)} aria-label="Geplante Aktivierung aufheben"><X size={15} /></button>
                   )}
