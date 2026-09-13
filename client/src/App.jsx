@@ -35,6 +35,7 @@ import {
   Trash2,
   Clock,
   Send,
+  Eye,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -978,7 +979,7 @@ export default function CoachingLogbuch() {
                   role === "coachee" ? (
                     <CoacheeTrainingView plans={plans} exercises={exercises} sessions={sessions} setSessions={updateSessions} setExercises={updateExercises} flash={flash} coacheeId={selectedCoacheeId} />
                   ) : (
-                    <CoachTrainingView exercises={exercises} setExercises={updateExercises} plans={plans} setPlans={updatePlans} profile={profile} sessions={sessions} coachees={coachees} coacheeId={selectedCoacheeId} planHistory={planHistory} onActivatePlan={recordPlanActivation} />
+                    <CoachTrainingView exercises={exercises} setExercises={updateExercises} plans={plans} setPlans={updatePlans} profile={profile} sessions={sessions} nutrition={nutrition} coachees={coachees} coacheeId={selectedCoacheeId} planHistory={planHistory} onActivatePlan={recordPlanActivation} />
                   )
                 )}
               </>
@@ -2002,7 +2003,7 @@ function MessagesView({ messages, setMessages, role, coacheeId, coacheeName }) {
 }
 
 /* ================= Trainingsplanung — Coach ================= */
-function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, sessions, coachees, coacheeId, planHistory, onActivatePlan }) {
+function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, sessions, nutrition, coachees, coacheeId, planHistory, onActivatePlan }) {
   const [sub, setSub] = useState("plans");
   return (
     <div className="ptlog-section">
@@ -2014,10 +2015,10 @@ function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, 
         <button className={"ptlog-mode-btn" + (sub === "calendar" ? " active" : "")} onClick={() => setSub("calendar")}>Kalender</button>
       </div>
       <div className="ptlog-card">
-        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} onActivate={onActivatePlan} coachees={coachees} coacheeId={coacheeId} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
+        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} setExercises={setExercises} onActivate={onActivatePlan} coachees={coachees} coacheeId={coacheeId} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
         {sub === "history" && <SessionHistoryList sessions={sessions} exercises={exercises} />}
         {sub === "library" && <ExerciseLibraryManager exercises={exercises} setExercises={setExercises} />}
-        {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} planHistory={planHistory} />}
+        {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} planHistory={planHistory} nutrition={nutrition} />}
       </div>
     </div>
   );
@@ -2025,7 +2026,7 @@ function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, 
 
 const MAIN_MUSCLE_CATEGORIES = ["Beine", "Rücken", "Brust", "Schultern", "Arme", "Bauch/Rumpf"];
 
-function CoachCalendar({ sessions, exercises, profile, plans, planHistory }) {
+function CoachCalendar({ sessions, exercises, profile, plans, planHistory, nutrition }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState(null);
 
@@ -2163,6 +2164,18 @@ function CoachCalendar({ sessions, exercises, profile, plans, planHistory }) {
             }
             return null;
           })()}
+          {(() => {
+            const dayEntries = (nutrition || []).filter((n) => n.date === selectedDate);
+            if (dayEntries.length === 0) return null;
+            const totals = dayEntries.reduce((s, e) => ({ kcal: s.kcal + e.kcal, protein: s.protein + e.protein, carbs: s.carbs + e.carbs, fat: s.fat + e.fat }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+            const targets = { kcal: Number(profile?.kcalTarget) || 0, protein: Number(profile?.proteinTarget) || 0, carbs: Number(profile?.carbsTarget) || 0, fat: Number(profile?.fatTarget) || 0 };
+            return (
+              <div style={{ marginBottom: 14 }}>
+                <h4 style={{ margin: "0 0 6px", fontSize: 14 }}>Ernährung — {round(totals.kcal)} kcal{targets.kcal ? ` von ${targets.kcal} kcal` : ""}</h4>
+                <NutrientChart totals={totals} targets={targets} />
+              </div>
+            );
+          })()}
           {(sessionsByDate[selectedDate] || []).length === 0 ? (
             <p className="ptlog-muted">Keine Trainingseinheit an diesem Tag.</p>
           ) : (
@@ -2283,8 +2296,11 @@ function ImageUrlInput({ onAdd }) {
   return (<div className="ptlog-add-row" style={{ marginTop: 8 }}><input placeholder="Bild-URL einfügen…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: 1 }} /><button className="ptlog-btn" type="button" onClick={() => { onAdd(url); setUrl(""); }}>Hinzufügen</button></div>);
 }
 
-function ExercisePicker({ exercises, profile, onPick, placeholder }) {
+function ExercisePicker({ exercises, profile, onPick, placeholder, setExercises }) {
   const [q, setQ] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCategory, setNewCategory] = useState(CATEGORY_OPTIONS[0]);
   const matches = useMemo(() => {
     if (!q.trim()) return [];
     const query = q.toLowerCase();
@@ -2292,6 +2308,13 @@ function ExercisePicker({ exercises, profile, onPick, placeholder }) {
     if (profile?.goalType) list = [...list].sort((a, b) => (b.goalTags?.includes(profile.goalType) ? 1 : 0) - (a.goalTags?.includes(profile.goalType) ? 1 : 0));
     return list.slice(0, 6);
   }, [q, exercises, profile]);
+  const saveNew = () => {
+    if (!newName.trim() || !setExercises) return;
+    const ex = { id: uid(), name: newName.trim(), category: newCategory, equipment: "", muscles: [], goalTags: [], images: [] };
+    setExercises([...exercises, ex]);
+    onPick(ex.id);
+    setNewName(""); setShowAdd(false); setQ("");
+  };
   return (
     <div className="ptlog-food-search" style={{ marginTop: 8 }}>
       <input placeholder={placeholder || "Übung suchen…"} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -2305,12 +2328,29 @@ function ExercisePicker({ exercises, profile, onPick, placeholder }) {
           ))}
         </ul>
       )}
+      {setExercises && (
+        showAdd ? (
+          <div className="ptlog-add-row" style={{ marginTop: 8 }}>
+            <input placeholder="Name der neuen Übung" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ flex: 1 }} />
+            <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ width: "auto" }}>
+              {CATEGORY_OPTIONS.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+            <button className="ptlog-btn primary" type="button" onClick={saveNew} disabled={!newName.trim()}>Anlegen</button>
+            <button className="ptlog-btn-x" type="button" onClick={() => setShowAdd(false)}><X size={13} /></button>
+          </div>
+        ) : (
+          <button className="ptlog-btn" type="button" onClick={() => { setShowAdd(true); setNewName(q); }} style={{ marginTop: 8 }}><Plus size={12} /> Neue Übung anlegen</button>
+        )
+      )}
     </div>
   );
 }
 
 /* Übung per echtem Dropdown auswählen (statt Suchliste) — gruppiert nach Kategorie */
-function ExerciseSelect({ exercises, onPick, placeholder }) {
+function ExerciseSelect({ exercises, onPick, placeholder, setExercises }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCategory, setNewCategory] = useState(CATEGORY_OPTIONS[0]);
   const grouped = useMemo(() => {
     const map = {};
     [...exercises].sort((a, b) => a.name.localeCompare(b.name)).forEach((e) => {
@@ -2319,19 +2359,42 @@ function ExerciseSelect({ exercises, onPick, placeholder }) {
     });
     return map;
   }, [exercises]);
+  const saveNew = () => {
+    if (!newName.trim() || !setExercises) return;
+    const ex = { id: uid(), name: newName.trim(), category: newCategory, equipment: "", muscles: [], goalTags: [], images: [] };
+    setExercises([...exercises, ex]);
+    onPick(ex.id);
+    setNewName(""); setShowAdd(false);
+  };
   return (
-    <select
-      value=""
-      onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
-      style={{ marginTop: 8 }}
-    >
-      <option value="">{placeholder || "Übung auswählen…"}</option>
-      {Object.entries(grouped).map(([cat, list]) => (
-        <optgroup key={cat} label={cat}>
-          {list.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
-        </optgroup>
-      ))}
-    </select>
+    <div>
+      <select
+        value=""
+        onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
+        style={{ marginTop: 8 }}
+      >
+        <option value="">{placeholder || "Übung auswählen…"}</option>
+        {Object.entries(grouped).map(([cat, list]) => (
+          <optgroup key={cat} label={cat}>
+            {list.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
+          </optgroup>
+        ))}
+      </select>
+      {setExercises && (
+        showAdd ? (
+          <div className="ptlog-add-row" style={{ marginTop: 8 }}>
+            <input placeholder="Name der neuen Übung" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ flex: 1 }} />
+            <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ width: "auto" }}>
+              {CATEGORY_OPTIONS.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+            <button className="ptlog-btn primary" type="button" onClick={saveNew} disabled={!newName.trim()}>Anlegen</button>
+            <button className="ptlog-btn-x" type="button" onClick={() => setShowAdd(false)}><X size={13} /></button>
+          </div>
+        ) : (
+          <button className="ptlog-btn" type="button" onClick={() => setShowAdd(true)} style={{ marginTop: 8 }}><Plus size={12} /> Neue Übung anlegen</button>
+        )
+      )}
+    </div>
   );
 }
 
@@ -2398,11 +2461,12 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
 }
 
 /* ================= Trainingspläne — direkt mit Inhalt pro Tag (Coach) ================= */
-function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees, coacheeId, coacheeName }) {
+function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActivate, coachees, coacheeId, coacheeName }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expandedDayId, setExpandedDayId] = useState(null);
   const [printPlan, setPrintPlan] = useState(null);
+  const [previewDay, setPreviewDay] = useState(null);
   const [schedulingId, setSchedulingId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(todayISO());
   const [f, setF] = useState({ name: "", days: emptyPlanDays() });
@@ -2465,6 +2529,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees
   return (
     <div>
       {printPlan && <PrintablePlan plan={printPlan} exercises={exercises} coacheeName={coacheeName} />}
+      {previewDay && <DayPreviewModal day={previewDay} exercises={exercises} onClose={() => setPreviewDay(null)} />}
       {!showForm ? (
         <>
           <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div>
@@ -2535,6 +2600,9 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
                     {!d.isRestDay && (
+                      <button className="ptlog-btn-x" onClick={() => setPreviewDay(d)} aria-label="Vorschau: So sieht es der Coachee"><Eye size={15} /></button>
+                    )}
+                    {!d.isRestDay && (
                       <select value="" onChange={(e) => { if (e.target.value !== "") swapDayContent(d.id, Number(e.target.value)); }} title="Auf einen anderen Wochentag verschieben" style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}>
                         <option value="">↔ verschieben</option>
                         {WEEKDAY_FULL.map((name, idx) => idx !== d.weekday && (<option key={idx} value={idx}>nach {name}</option>))}
@@ -2599,7 +2667,7 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees
                                 );
                               })}
                               {(superset || g.items.length === 0) && (
-                                <ExerciseSelect exercises={exercises} onPick={(exId) => addItemToBlock(d.id, g.id, exId)} placeholder="Übung auswählen…" />
+                                <ExerciseSelect exercises={exercises} setExercises={setExercises} onPick={(exId) => addItemToBlock(d.id, g.id, exId)} placeholder="Übung auswählen…" />
                               )}
                             </div>
                           );
@@ -2627,6 +2695,60 @@ function PlanManager({ plans, setPlans, exercises, profile, onActivate, coachees
 }
 
 /* ================= Trainingsplanung — Coachee (Ausführung) ================= */
+function DayContentPreview({ day, exercises, onExerciseClick }) {
+  const allMuscles = [...new Set(day.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)).filter(Boolean).flatMap((e) => e.muscles)))];
+  return (
+    <>
+      {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
+      {day.groups.length === 0 ? (
+        <p className="ptlog-muted">Ruhetag — keine Übungen an diesem Tag.</p>
+      ) : (
+        day.groups.map((g) => (
+          <div key={g.id} className="ptlog-block-card ptlog-block-group">
+            <div className={"ptlog-block-group-label" + (isSuperset(g) ? " superset" : "")}>
+              {isSuperset(g) ? `Super Set · ${g.rounds} Runde${g.rounds != 1 ? "n" : ""}` : "Regulärer Satz"}
+            </div>
+            {g.items.map((item, ii) => {
+              const ex = exercises.find((e) => e.id === item.exerciseId);
+              return (
+                <div key={item.id} className="ptlog-exercise-row" onClick={() => onExerciseClick && onExerciseClick(item.exerciseId)} style={{ cursor: onExerciseClick ? "pointer" : "default" }}>
+                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                  <div className="ptlog-exercise-info">
+                    <strong>{ex ? ex.name : "?"}</strong>
+                    <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
+                    {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
+                  </div>
+                  {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
+                </div>
+              );
+            })}
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+function DayPreviewModal({ day, exercises, onClose }) {
+  return (
+    <div className="ptlog-modal-overlay" onClick={onClose}>
+      <div className="ptlog-modal" onClick={(e) => e.stopPropagation()} style={{ padding: 18 }}>
+        <div className="ptlog-row-between" style={{ marginBottom: 10 }}>
+          <div>
+            <span className="ptlog-eyebrow">So sieht es der Coachee</span>
+            <h3 style={{ margin: 0 }}>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h3>
+          </div>
+          <button className="ptlog-btn-x" onClick={onClose}><X size={16} /></button>
+        </div>
+        {day.note && <p className="ptlog-muted" style={{ marginTop: -6 }}>{day.note}</p>}
+        <DayContentPreview day={day} exercises={exercises} />
+        <button className="ptlog-btn primary wide" style={{ marginTop: 8 }} disabled>Trainingseinheit beginnen</button>
+        <p className="ptlog-muted" style={{ fontSize: 12, textAlign: "center", marginTop: 6 }}>Nur Vorschau — hier nicht startbar</p>
+      </div>
+    </div>
+  );
+}
+
 function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExercises, flash, coacheeId }) {
   const [homeTab, setHomeTab] = useState("plan"); // plan | start | history
   const [view, setView] = useState("home"); // home | day | session
@@ -2764,33 +2886,11 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
 
   if (view === "day" && activeDay) {
     const day = activeDay.day;
-    const allMuscles = [...new Set(day.groups.flatMap((g) => g.items.map((i) => exercises.find((e) => e.id === i.exerciseId)).filter(Boolean).flatMap((e) => e.muscles)))];
     return (
       <div className="ptlog-section" style={{ paddingBottom: 70 }}>
         <button className="ptlog-btn" onClick={() => setView("home")} style={{ marginBottom: 10 }}><ChevronLeft size={14} /> zurück</button>
         <h2>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h2>
-        {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
-        {day.groups.map((g, gi) => (
-          <div key={g.id} className="ptlog-block-card ptlog-block-group">
-            <div className={"ptlog-block-group-label" + (isSuperset(g) ? " superset" : "")}>
-              {isSuperset(g) ? `Super Set · ${g.rounds} Runde${g.rounds != 1 ? "n" : ""}` : "Regulärer Satz"}
-            </div>
-            {g.items.map((item, ii) => {
-              const ex = exercises.find((e) => e.id === item.exerciseId);
-              return (
-                <div key={item.id} className="ptlog-exercise-row" onClick={() => setModalExerciseId(item.exerciseId)}>
-                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
-                  <div className="ptlog-exercise-info">
-                    <strong>{ex ? ex.name : "?"}</strong>
-                    <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
-                    {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
-                  </div>
-                  {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
-                </div>
-              );
-              })}
-            </div>
-          ))}
+        <DayContentPreview day={day} exercises={exercises} onExerciseClick={setModalExerciseId} />
         <button className="ptlog-btn primary wide sticky-bottom" onClick={() => startDaySession(day)}>Trainingseinheit beginnen</button>
         {modalExerciseId && <ExerciseDetailModal exercise={exercises.find((e) => e.id === modalExerciseId)} sessions={sessions} onClose={() => setModalExerciseId(null)} />}
       </div>
@@ -2879,7 +2979,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
         })()}
         {activeSession.planDayId === null && (
           <div className="ptlog-block-card">
-            <ExercisePicker exercises={exercises} onPick={addAdHocExercise} placeholder="Übung hinzufügen…" />
+            <ExercisePicker exercises={exercises} onPick={addAdHocExercise} placeholder="Übung hinzufügen…" setExercises={setExercises} />
           </div>
         )}
         <button className="ptlog-btn primary wide sticky-bottom" onClick={finishSession}>Einheit abschließen</button>
