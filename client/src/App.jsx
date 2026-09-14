@@ -1475,6 +1475,17 @@ function Onboarding({ profile, onSave, readOnly, weights }) {
     setF((prev) => ({ ...prev, kcalTarget: t.kcal, proteinTarget: t.protein, carbsTarget: t.carbs, fatTarget: t.fat }));
     setAutoCalc(false);
   };
+  const updateMacroField = (key, val) => {
+    setAutoCalc(false);
+    setF((prev) => {
+      const next = { ...prev, [key]: val };
+      const kcal = Number(next.kcalTarget) || 0;
+      const protein = Number(next.proteinTarget) || 0;
+      const fat = Number(next.fatTarget) || 0;
+      if (kcal > 0) next.carbsTarget = Math.max(0, round((kcal - protein * 4 - fat * 9) / 4));
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (readOnly) return;
@@ -1558,11 +1569,12 @@ function Onboarding({ profile, onSave, readOnly, weights }) {
         </div>
         {readOnly && <p className="ptlog-muted" style={{ marginTop: -6 }}>Als Coach kannst du diese Werte manuell anpassen, unabhängig von den restlichen (nur lesbaren) Angaben.</p>}
         <div className="ptlog-grid-4">
-          <Field label="Kalorien (kcal/Tag)"><input type="number" value={f.kcalTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, kcalTarget: e.target.value }); }} /></Field>
-          <Field label="Protein (g)"><input type="number" value={f.proteinTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, proteinTarget: e.target.value }); }} /></Field>
+          <Field label="Kalorien (kcal/Tag)"><input type="number" value={f.kcalTarget} onChange={(e) => updateMacroField("kcalTarget", e.target.value)} /></Field>
+          <Field label="Protein (g)"><input type="number" value={f.proteinTarget} onChange={(e) => updateMacroField("proteinTarget", e.target.value)} /></Field>
           <Field label="Kohlenhydrate (g)"><input type="number" value={f.carbsTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, carbsTarget: e.target.value }); }} /></Field>
-          <Field label="Fett (g)"><input type="number" value={f.fatTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, fatTarget: e.target.value }); }} /></Field>
+          <Field label="Fett (g)"><input type="number" value={f.fatTarget} onChange={(e) => updateMacroField("fatTarget", e.target.value)} /></Field>
         </div>
+        <p className="ptlog-muted" style={{ fontSize: 12, marginTop: 6 }}>Protein und Fett bleiben an dein Körpergewicht gekoppelt — Kohlenhydrate gleichen automatisch aus, wenn du die Kalorien, das Protein- oder das Fettziel änderst.</p>
         {readOnly && profile && (
           <button className="ptlog-btn primary" type="button" onClick={() => onSave({ ...f, startDate: f.startDate || todayISO() })} style={{ marginTop: 8 }}>Ernährungsziele speichern</button>
         )}
