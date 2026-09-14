@@ -1556,12 +1556,16 @@ function Onboarding({ profile, onSave, readOnly, weights }) {
           <h3>Ernährungsziele</h3>
           {!readOnly && <label className="ptlog-checkbox"><input type="checkbox" checked={autoCalc} onChange={(e) => setAutoCalc(e.target.checked)} /> automatisch schätzen (Mifflin-St-Jeor)</label>}
         </div>
+        {readOnly && <p className="ptlog-muted" style={{ marginTop: -6 }}>Als Coach kannst du diese Werte manuell anpassen, unabhängig von den restlichen (nur lesbaren) Angaben.</p>}
         <div className="ptlog-grid-4">
-          <Field label="Kalorien (kcal/Tag)"><input type="number" value={f.kcalTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, kcalTarget: e.target.value }); }} disabled={readOnly} /></Field>
-          <Field label="Protein (g)"><input type="number" value={f.proteinTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, proteinTarget: e.target.value }); }} disabled={readOnly} /></Field>
-          <Field label="Kohlenhydrate (g)"><input type="number" value={f.carbsTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, carbsTarget: e.target.value }); }} disabled={readOnly} /></Field>
-          <Field label="Fett (g)"><input type="number" value={f.fatTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, fatTarget: e.target.value }); }} disabled={readOnly} /></Field>
+          <Field label="Kalorien (kcal/Tag)"><input type="number" value={f.kcalTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, kcalTarget: e.target.value }); }} /></Field>
+          <Field label="Protein (g)"><input type="number" value={f.proteinTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, proteinTarget: e.target.value }); }} /></Field>
+          <Field label="Kohlenhydrate (g)"><input type="number" value={f.carbsTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, carbsTarget: e.target.value }); }} /></Field>
+          <Field label="Fett (g)"><input type="number" value={f.fatTarget} onChange={(e) => { setAutoCalc(false); setF({ ...f, fatTarget: e.target.value }); }} /></Field>
         </div>
+        {readOnly && profile && (
+          <button className="ptlog-btn primary" type="button" onClick={() => onSave({ ...f, startDate: f.startDate || todayISO() })} style={{ marginTop: 8 }}>Ernährungsziele speichern</button>
+        )}
       </div>
       {!readOnly && <button className="ptlog-btn primary" type="submit">{profile ? "Änderungen speichern" : "Profil anlegen"}</button>}
     </form>
