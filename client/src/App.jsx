@@ -91,7 +91,7 @@ const SEED_RAW = [
   ["Radfahren", "Cardio"], ["Radfahren (Indoor)", "Cardio"],
   ["Deadlift (Band)", "Beine"], ["Deadlift (Barbell)", "Rücken"], ["Deadlift (Dumbbell)", "Beine"], ["Deadlift (Smith Machine)", "Beine"],
   ["Deadlift High Pull (Barbell)", "Olympisch"], ["Decline Bench Press (Barbell)", "Brust"], ["Decline Bench Press (Dumbbell)", "Brust"],
-  ["Decline Bench Press (Smith Machine)", "Brust"], ["Decline Crunch", "Bauch/Rumpf"], ["Deficit Deadlift (Barbell)", "Beine"],
+  ["Decline Bench Press (Smith Machine)", "Brust"], ["Decline Crunch", "Bauch/Rumpf"], ["Deficit Deadlift (Barbell)", "Beine"], ["Diamond Push Up", "Brust"],
   ["Crosstrainer", "Cardio"], ["Face Pull (Cable)", "Schultern"], ["Flat Knee Raise", "Bauch/Rumpf"], ["Flat Leg Raise", "Bauch/Rumpf"],
   ["Floor Press (Barbell)", "Brust"], ["Front Raise (Band)", "Schultern"], ["Front Raise (Barbell)", "Schultern"], ["Front Raise (Cable)", "Schultern"],
   ["Front Raise (Dumbbell)", "Schultern"], ["Front Raise (Plate)", "Schultern"], ["Front Squat (Barbell)", "Beine"],
@@ -152,7 +152,7 @@ const SEED_RAW = [
   ["Triceps Extension (Cable)", "Arme"], ["Triceps Extension (Dumbbell)", "Arme"], ["Triceps Extension (Machine)", "Arme"],
   ["Triceps Press", "Arme"], ["Triceps Pushdown (Cable - Straight Bar)", "Arme"],
   ["Upright Row (Barbell)", "Schultern"], ["Upright Row (Cable)", "Schultern"], ["Upright Row (Dumbbell)", "Schultern"],
-  ["V Up", "Bauch/Rumpf"], ["Gehen", "Cardio"], ["Wall Balls", "Beine"], ["Wide Pull Up", "Rücken"], ["Wrist Roller", "Arme"],
+  ["V Up", "Bauch/Rumpf"], ["Gehen", "Cardio"], ["Wall Balls", "Beine"], ["Wall Sit", "Beine"], ["Wide Pull Up", "Rücken"], ["Wrist Roller", "Arme"],
   ["Yoga", "Cardio"], ["Zercher Squat (Barbell)", "Beine"],
 ];
 const SEED_EXERCISES = SEED_RAW.map(([name, category], i) => ({
