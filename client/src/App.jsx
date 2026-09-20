@@ -759,7 +759,15 @@ export default function CoachingLogbuch() {
       ]);
       setCoaches(co || []);
       setCoachees(c || []);
-      setExercisesState(ex || []);
+      const exList = ex || [];
+      const missingSeeds = SEED_EXERCISES.filter((s) => !exList.some((e) => e.name.toLowerCase() === s.name.toLowerCase()));
+      if (missingSeeds.length > 0) {
+        const merged = [...exList, ...missingSeeds.map((s) => ({ ...s, id: uid() }))];
+        setExercisesState(merged);
+        saveKey("exercises", merged);
+      } else {
+        setExercisesState(exList);
+      }
       setCustomFoods(cf || []);
       setRole(r || null);
       const validSelection = sc && (c || []).some((cc) => cc.id === sc) ? sc : null;
