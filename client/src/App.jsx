@@ -244,6 +244,19 @@ async function loadKey(key, shared = true) {
     return null;
   }
 }
+// Wie loadKey, unterscheidet aber "wirklich kein Wert gespeichert" von "Laden fehlgeschlagen" (Netzwerk-/Serverfehler).
+// Wichtig für Stellen, die bei Erfolg automatisch etwas zurückschreiben (z. B. Standarddaten nachladen) -
+// ein Fehlschlag darf dort NIEMALS als "leer" interpretiert und überschrieben werden.
+async function loadKeyChecked(key) {
+  try {
+    const res = await fetch(`${API_BASE}/storage/${encodeURIComponent(STORAGE_PREFIX + key)}`);
+    if (!res.ok) return { ok: false, value: null };
+    const data = await res.json();
+    return { ok: true, value: data.value ? JSON.parse(data.value) : null };
+  } catch (e) {
+    return { ok: false, value: null };
+  }
+}
 async function saveKey(key, data, shared = true) {
   try {
     if (!shared) {
@@ -753,20 +766,29 @@ export default function CoachingLogbuch() {
 
   useEffect(() => {
     (async () => {
-      const [co, c, ex, cf, r, sc, ssc, pa] = await Promise.all([
-        loadKey("coaches"), loadKey("coachees"), loadKey("exercises"), loadKey("customfoods"),
+      const [co, c, exResult, cf, r, sc, ssc, pa] = await Promise.all([
+        loadKey("coaches"), loadKey("coachees"), loadKeyChecked("exercises"), loadKey("customfoods"),
         loadKey("role", false), loadKey("selected-coachee", false), loadKey("selected-coach", false), loadKey("privacy-ack", false),
       ]);
       setCoaches(co || []);
       setCoachees(c || []);
-      const exList = ex || [];
-      const missingSeeds = SEED_EXERCISES.filter((s) => !exList.some((e) => e.name.toLowerCase() === s.name.toLowerCase()));
-      if (missingSeeds.length > 0) {
-        const merged = [...exList, ...missingSeeds.map((s) => ({ ...s, id: uid() }))];
-        setExercisesState(merged);
-        saveKey("exercises", merged);
+      // Nur bei erfolgreichem Laden ergänzen + zurückschreiben. Bei einem Lade-Fehler (Netzwerk/Server)
+      // NIE automatisch speichern - sonst würde ein einzelner Hänger die echte, gespeicherte
+      // Übungsliste (und damit alle IDs, auf die Trainingspläne verweisen) überschreiben.
+      if (exResult.ok) {
+        const exList = exResult.value || [];
+        const missingSeeds = SEED_EXERCISES.filter((s) => !exList.some((e) => e.name.toLowerCase() === s.name.toLowerCase()));
+        if (missingSeeds.length > 0) {
+          const merged = [...exList, ...missingSeeds.map((s) => ({ ...s, id: uid() }))];
+          setExercisesState(merged);
+          saveKey("exercises", merged);
+        } else {
+          setExercisesState(exList);
+        }
       } else {
-        setExercisesState(exList);
+        // Laden fehlgeschlagen: zeige vorerst leer/nichts Neues an, aber fass den gespeicherten Bestand nicht an.
+        setExercisesState([]);
+        flash("Übungsliste konnte nicht geladen werden - bitte Seite neu laden.");
       }
       setCustomFoods(cf || []);
       setRole(r || null);
