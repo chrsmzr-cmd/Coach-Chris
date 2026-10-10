@@ -1462,6 +1462,8 @@ function MacroHistory({ profile, nutrition }) {
   }), [nutrition]);
   const logged = rows.filter((r) => r.logged);
   const avg = (k) => (logged.length ? logged.reduce((a, r) => a + r[k], 0) / logged.length : 0);
+  const logged7 = rows.slice(-7).filter((r) => r.logged);
+  const avg7 = (k) => (logged7.length ? logged7.reduce((a, r) => a + r[k], 0) / logged7.length : 0);
   const pctClass = (v, target) => {
     if (!target) return "";
     const p = (v / target) * 100;
@@ -1522,7 +1524,13 @@ function MacroHistory({ profile, nutrition }) {
               </tr>
             ))}
             <tr style={{ textAlign: "right", borderTop: "2px solid " + COLORS.border, fontWeight: 600 }}>
-              <td style={{ textAlign: "left", padding: "8px 4px" }}>Ø ({logged.length} Tage)</td>
+              <td style={{ textAlign: "left", padding: "8px 4px" }}>Ø 7 Tage ({logged7.length} eingetr.)</td>
+              {["kcal", "protein", "carbs", "fat"].map((k) => (
+                <td key={k} style={{ padding: "8px 4px" }}>{logged7.length ? round(avg7(k), k === "kcal" ? 0 : 1) : "–"}</td>
+              ))}
+            </tr>
+            <tr style={{ textAlign: "right", fontWeight: 600 }}>
+              <td style={{ textAlign: "left", padding: "8px 4px" }}>Ø 14 Tage ({logged.length} eingetr.)</td>
               {["kcal", "protein", "carbs", "fat"].map((k) => (
                 <td key={k} style={{ padding: "8px 4px" }}>{logged.length ? round(avg(k), k === "kcal" ? 0 : 1) : "–"}</td>
               ))}
