@@ -36,6 +36,7 @@ import {
   Clock,
   Send,
   Eye,
+  BarChart3,
 } from "lucide-react";
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
@@ -921,6 +922,7 @@ export default function CoachingLogbuch() {
     { id: "overview", label: "Übersicht", icon: LayoutDashboard },
     { id: "onboarding", label: "Onboarding", icon: UserPlus },
     { id: "nutrition", label: "Ernährung", icon: Utensils },
+    { id: "macros", label: "Makros", icon: BarChart3 },
     { id: "weight", label: "Gewicht", icon: Scale },
     { id: "training", label: "Training", icon: Dumbbell },
     { id: "messages", label: "Nachrichten", icon: MessageCircle },
@@ -1000,6 +1002,7 @@ export default function CoachingLogbuch() {
                 {tab === "nutrition" && (
                   <Nutrition profile={profile} nutrition={nutrition} setNutrition={updateNutrition} foodDb={foodDb} customFoods={customFoods} setCustomFoods={updateCustomFoods} flash={flash} readOnly={role !== "coachee"} />
                 )}
+                {tab === "macros" && role !== "coachee" && <MacroHistory profile={profile} nutrition={nutrition} />}
                 {tab === "weight" && <WeightTab profile={profile} weights={weights} setWeights={updateWeights} measurements={measurements} setMeasurements={updateMeasurements} flash={flash} readOnly={role !== "coachee"} />}
                 {tab === "messages" && <MessagesView messages={messages} setMessages={updateMessages} role={role} coacheeId={selectedCoacheeId} coacheeName={profile?.name} />}
                 {tab === "avatar" && role === "coachee" && (
@@ -1432,6 +1435,101 @@ function StatCard({ label, value, unit, sub, tone }) {
       <span className="ptlog-stat-label">{label}</span>
       <span className="ptlog-stat-value">{value}<span className="ptlog-stat-unit">{unit}</span></span>
       <span className="ptlog-stat-sub">{sub}</span>
+    </div>
+  );
+}
+
+/* ---------- Coach: Makronährstoffe der letzten 14 Tage ---------- */
+function lastNDates(n) {
+  const out = [];
+  const [y, m, d] = todayISO().split("-").map(Number);
+  for (let i = n - 1; i >= 0; i--) {
+    const dt = new Date(Date.UTC(y, m - 1, d - i));
+    out.push(dt.toISOString().slice(0, 10));
+  }
+  return out;
+}
+function MacroHistory({ profile, nutrition }) {
+  const DAYS = 14;
+  const targets = {
+    kcal: Number(profile?.kcalTarget) || 0, protein: Number(profile?.proteinTarget) || 0,
+    carbs: Number(profile?.carbsTarget) || 0, fat: Number(profile?.fatTarget) || 0,
+  };
+  const rows = useMemo(() => lastNDates(DAYS).map((date) => {
+    const es = nutrition.filter((e) => e.date === date);
+    const t = es.reduce((a, e) => ({ kcal: a.kcal + (e.kcal || 0), protein: a.protein + (e.protein || 0), carbs: a.carbs + (e.carbs || 0), fat: a.fat + (e.fat || 0) }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+    return { date, logged: es.length > 0, ...t };
+  }), [nutrition]);
+  const logged = rows.filter((r) => r.logged);
+  const avg = (k) => (logged.length ? logged.reduce((a, r) => a + r[k], 0) / logged.length : 0);
+  const pctClass = (v, target) => {
+    if (!target) return "";
+    const p = (v / target) * 100;
+    return p >= 90 && p <= 110 ? "ok" : "off";
+  };
+  const chartData = rows.map((r) => ({ name: fmtDate(r.date).slice(0, 5), kcal: r.logged ? round(r.kcal) : 0, logged: r.logged }));
+  const maxY = Math.max(targets.kcal * 1.2, ...chartData.map((d) => d.kcal), 100);
+  const cell = (v, k, r) => (r.logged ? round(v, k === "kcal" ? 0 : 1) : "–");
+
+  if (!profile) return (<div className="ptlog-empty"><h2>Noch kein Klientenprofil angelegt</h2></div>);
+  return (
+    <div className="ptlog-section">
+      <div className="ptlog-card">
+        <h3>Makronährstoffe – letzte {DAYS} Tage</h3>
+        <p className="ptlog-muted" style={{ fontSize: 13, margin: "4px 0 12px" }}>
+          Eingetragen an {logged.length} von {DAYS} Tagen. Durchschnitt zählt nur Tage mit Einträgen. Grün = 90–110 % vom Ziel.
+        </p>
+        <div style={{ height: 210 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 10, right: 8, left: -20, bottom: 0 }} barCategoryGap="20%">
+              <CartesianGrid stroke={COLORS.border} vertical={false} strokeDasharray="3 3" />
+              <XAxis dataKey="name" stroke={COLORS.muted} fontSize={10} tickLine={false} axisLine={false} interval={0} />
+              <YAxis stroke={COLORS.muted} fontSize={11} tickLine={false} axisLine={false} domain={[0, maxY]} />
+              {targets.kcal > 0 && <ReferenceLine y={targets.kcal} stroke={COLORS.muted} strokeDasharray="4 4" />}
+              <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} formatter={(v) => [v + " kcal", "Kalorien"]} contentStyle={{ background: COLORS.surface2, border: "1px solid " + COLORS.border, borderRadius: 8 }} />
+              <Bar dataKey="kcal" radius={[4, 4, 0, 0]}>
+                {chartData.map((d, i) => (<Cell key={i} fill={!d.logged ? COLORS.border : targets.kcal && d.kcal > targets.kcal * 1.1 ? COLORS.warn : COLORS.accent} />))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div className="ptlog-card" style={{ marginTop: 16, overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
+          <thead>
+            <tr style={{ color: COLORS.muted, textAlign: "right" }}>
+              <th style={{ textAlign: "left", padding: "6px 4px" }}>Datum</th>
+              <th style={{ padding: "6px 4px" }}>kcal</th><th style={{ padding: "6px 4px" }}>Protein</th>
+              <th style={{ padding: "6px 4px" }}>Kohlenh.</th><th style={{ padding: "6px 4px" }}>Fett</th>
+            </tr>
+            {targets.kcal > 0 && (
+              <tr style={{ color: COLORS.muted, textAlign: "right", fontSize: 12 }}>
+                <td style={{ textAlign: "left", padding: "2px 4px" }}>Ziel</td>
+                <td style={{ padding: "2px 4px" }}>{targets.kcal}</td><td style={{ padding: "2px 4px" }}>{targets.protein} g</td>
+                <td style={{ padding: "2px 4px" }}>{targets.carbs} g</td><td style={{ padding: "2px 4px" }}>{targets.fat} g</td>
+              </tr>
+            )}
+          </thead>
+          <tbody>
+            {[...rows].reverse().map((r) => (
+              <tr key={r.date} style={{ textAlign: "right", borderTop: "1px solid " + COLORS.border, opacity: r.logged ? 1 : 0.5 }}>
+                <td style={{ textAlign: "left", padding: "7px 4px" }}>{fmtDate(r.date)}</td>
+                {["kcal", "protein", "carbs", "fat"].map((k) => (
+                  <td key={k} style={{ padding: "7px 4px", color: r.logged && pctClass(r[k], targets[k]) === "ok" ? COLORS.good : r.logged && pctClass(r[k], targets[k]) === "off" ? COLORS.warn : COLORS.text }}>
+                    {cell(r[k], k, r)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr style={{ textAlign: "right", borderTop: "2px solid " + COLORS.border, fontWeight: 600 }}>
+              <td style={{ textAlign: "left", padding: "8px 4px" }}>Ø ({logged.length} Tage)</td>
+              {["kcal", "protein", "carbs", "fat"].map((k) => (
+                <td key={k} style={{ padding: "8px 4px" }}>{logged.length ? round(avg(k), k === "kcal" ? 0 : 1) : "–"}</td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
