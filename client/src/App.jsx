@@ -2976,7 +2976,9 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
     setActiveSession((prev) => {
       const entry = prev.entries.find((e) => e.id === entryId);
       const wasDone = entry.sets[setIdx].done;
-      if (!wasDone) setRestTimer({ entryId, setIdx, remaining: entry.restSeconds || 90, total: entry.restSeconds || 90 });
+      const groupMembers = entry.groupType === "superset" && entry.groupId ? prev.entries.filter((e) => e.groupId === entry.groupId) : [];
+      const isLastInRound = groupMembers.length < 2 || groupMembers[groupMembers.length - 1].id === entry.id;
+      if (!wasDone && isLastInRound) setRestTimer({ entryId, setIdx, remaining: entry.restSeconds || 90, total: entry.restSeconds || 90 });
       return { ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => (i === setIdx ? { ...s, done: !s.done } : s)) } : e)) };
     });
   };
@@ -3067,65 +3069,100 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
         {(() => {
           const groupCounts = {};
           activeSession.entries.forEach((e) => { if (e.groupId) groupCounts[e.groupId] = (groupCounts[e.groupId] || 0) + 1; });
-          return activeSession.entries.map((entry, idx) => {
-            const prevEntry = activeSession.entries[idx - 1];
-            const isNewGroup = entry.groupId ? entry.groupId !== prevEntry?.groupId : true;
-            const isMultiGroup = entry.groupId && groupCounts[entry.groupId] > 1;
+          const renderedGroups = {};
+          // Satzzeilen einer Übung (von..bis, absolute Satz-Indizes) - identisch für reguläre Sätze und Supersatz-Runden
+          const renderSets = (entry, from, to) => entry.sets.slice(from, to).map((s, k) => {
+            const si = from + k;
+            const prevRef = getPreviousSetRef(sessions, entry.exerciseId, activeSession.id, si);
+            const unitLabel = (s.target.unit || entry.unit) === "min" ? "Min" : "kg";
+            return (
+              <React.Fragment key={si}>
+                <div className={"ptlog-settable-row" + (s.done ? " done" : "")}>
+                  <span className="ptlog-muted">{si + 1}</span>
+                  <span className="ptlog-settable-prev">{prevRef || "—"}</span>
+                  <input type="number" placeholder={s.target.weight || unitLabel} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
+                  <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
+                  <button type="button" className={"ptlog-check-btn" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={14} /></button>
+                </div>
+                {s.target.distance || s.distance ? (
+                  <input className="ptlog-settable-distance" placeholder={s.target.distance || "Strecke/Zeit"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
+                ) : null}
+                <div className="ptlog-log-setrow-extra">
+                  <input type="number" min="1" max="10" placeholder="RPE" value={s.rpe} onChange={(e) => updateEntrySet(entry.id, si, "rpe", e.target.value)} />
+                  <button type="button" className={"ptlog-pain-btn" + (s.pain ? " active" : "")} onClick={() => updateEntrySet(entry.id, si, "pain", !s.pain)}>⚠️ Schmerz</button>
+                </div>
+                {restTimer && restTimer.entryId === entry.id && restTimer.setIdx === si && restTimer.remaining > 0 && (
+                  <div className="ptlog-rest-timer-inline">
+                    <span className="ptlog-rest-line" />
+                    <span>{Math.floor(restTimer.remaining / 60)}:{String(restTimer.remaining % 60).padStart(2, "0")}</span>
+                    <span className="ptlog-rest-line" />
+                    <button className="ptlog-btn-x" type="button" onClick={() => setRestTimer(null)} aria-label="Pause überspringen"><X size={13} /></button>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          });
+          const renderHead = (entry, withLetter) => {
             const ex = exercises.find((e) => e.id === entry.exerciseId);
             return (
-              <React.Fragment key={entry.id}>
-                {isNewGroup && isMultiGroup && (
-                  <div className="ptlog-block-group-label superset" style={{ marginTop: idx > 0 ? 14 : 0 }}>Super Set · {entry.groupRounds} Runde{entry.groupRounds != 1 ? "n" : ""}</div>
+              <>
+                <div className="ptlog-exercise-row" style={{ padding: 0, marginBottom: 8, cursor: "pointer" }} onClick={() => setModalExerciseId(entry.exerciseId)}>
+                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                  <strong>{ex ? ex.name : "?"}</strong>
+                  {withLetter && <span className="ptlog-letter-badge">{entry.groupLetter}</span>}
+                </div>
+                {entry.coachNote && <div className="ptlog-coach-note-banner">📝 {entry.coachNote}</div>}
+              </>
+            );
+          };
+          const renderSetHeader = (entry) => (
+            <div className="ptlog-settable-header">
+              <span>Satz</span><span>Vorherige</span><span>{(entry.unit || entry.sets[0]?.target?.unit) === "min" ? "Min" : "kg"}</span><span>Wdh.</span><span></span>
+            </div>
+          );
+          return activeSession.entries.map((entry, idx) => {
+            const isSupersetGroup = entry.groupType === "superset" && entry.groupId && groupCounts[entry.groupId] > 1;
+            if (isSupersetGroup) {
+              // Supersatz: nach Runden gruppiert (Runde 1: A, B - Runde 2: A, B ...)
+              if (renderedGroups[entry.groupId]) return null;
+              renderedGroups[entry.groupId] = true;
+              const members = activeSession.entries.filter((e) => e.groupId === entry.groupId);
+              const R = Math.max(1, entry.groupRounds || 1);
+              const base = members.map((m) => Math.max(1, Math.floor(m.sets.length / R)));
+              return (
+                <React.Fragment key={entry.groupId}>
+                  <div className="ptlog-block-group-label superset" style={{ marginTop: idx > 0 ? 14 : 0 }}>Super Set · {R} Runde{R !== 1 ? "n" : ""}</div>
+                  {Array.from({ length: R }, (_, r) => (
+                    <div className="ptlog-block-card" key={r}>
+                      <div className="ptlog-block-group-label" style={{ marginBottom: 8 }}>Runde {r + 1}</div>
+                      {members.map((m, mi) => (
+                        <div key={m.id} style={mi > 0 ? { marginTop: 10 } : undefined}>
+                          {renderHead(m, true)}
+                          {renderSetHeader(m)}
+                          {renderSets(m, r * base[mi], r === R - 1 ? m.sets.length : (r + 1) * base[mi])}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                    {members.map((m) => (<button key={m.id} className="ptlog-btn" type="button" onClick={() => addSetToEntry(m.id)}><Plus size={12} /> Satz {m.groupLetter}</button>))}
+                  </div>
+                </React.Fragment>
+              );
+            }
+            return (
+              <div className="ptlog-block-card" key={entry.id}>
+                {renderHead(entry, false)}
+                {activeSession.planDayId === null && (
+                  <div className="ptlog-mode-tabs" style={{ margin: "0 0 6px" }}>
+                    <button type="button" className={"ptlog-mode-btn" + ((entry.unit || "kg") === "kg" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "kg")}>kg</button>
+                    <button type="button" className={"ptlog-mode-btn" + (entry.unit === "min" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "min")}>Minuten</button>
+                  </div>
                 )}
-                <div className="ptlog-block-card" style={isMultiGroup && !isNewGroup ? { marginTop: -6 } : undefined}>
-              <div className="ptlog-exercise-row" style={{ padding: 0, marginBottom: 8, cursor: "pointer" }} onClick={() => setModalExerciseId(entry.exerciseId)}>
-                <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
-                <strong>{ex ? ex.name : "?"}</strong>
-                {isMultiGroup && <span className="ptlog-letter-badge">{entry.groupLetter}</span>}
+                {renderSetHeader(entry)}
+                {renderSets(entry, 0, entry.sets.length)}
+                <button className="ptlog-btn" type="button" onClick={() => addSetToEntry(entry.id)} style={{ marginTop: 6 }}><Plus size={12} /> Satz</button>
               </div>
-              {entry.coachNote && <div className="ptlog-coach-note-banner">📝 {entry.coachNote}</div>}
-              {activeSession.planDayId === null && (
-                <div className="ptlog-mode-tabs" style={{ margin: "0 0 6px" }}>
-                  <button type="button" className={"ptlog-mode-btn" + ((entry.unit || "kg") === "kg" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "kg")}>kg</button>
-                  <button type="button" className={"ptlog-mode-btn" + (entry.unit === "min" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "min")}>Minuten</button>
-                </div>
-              )}
-              <div className="ptlog-settable-header">
-                <span>Satz</span><span>Vorherige</span><span>{(entry.unit || entry.sets[0]?.target?.unit) === "min" ? "Min" : "kg"}</span><span>Wdh.</span><span></span>
-              </div>
-              {entry.sets.map((s, si) => {
-                const prevRef = getPreviousSetRef(sessions, entry.exerciseId, activeSession.id, si);
-                const unitLabel = (s.target.unit || entry.unit) === "min" ? "Min" : "kg";
-                return (
-                  <React.Fragment key={si}>
-                    <div className={"ptlog-settable-row" + (s.done ? " done" : "")}>
-                      <span className="ptlog-muted">{si + 1}</span>
-                      <span className="ptlog-settable-prev">{prevRef || "—"}</span>
-                      <input type="number" placeholder={s.target.weight || unitLabel} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
-                      <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
-                      <button type="button" className={"ptlog-check-btn" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={14} /></button>
-                    </div>
-                    {s.target.distance || s.distance ? (
-                      <input className="ptlog-settable-distance" placeholder={s.target.distance || "Strecke/Zeit"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
-                    ) : null}
-                    <div className="ptlog-log-setrow-extra">
-                      <input type="number" min="1" max="10" placeholder="RPE" value={s.rpe} onChange={(e) => updateEntrySet(entry.id, si, "rpe", e.target.value)} />
-                      <button type="button" className={"ptlog-pain-btn" + (s.pain ? " active" : "")} onClick={() => updateEntrySet(entry.id, si, "pain", !s.pain)}>⚠️ Schmerz</button>
-                    </div>
-                    {restTimer && restTimer.entryId === entry.id && restTimer.setIdx === si && restTimer.remaining > 0 && (
-                      <div className="ptlog-rest-timer-inline">
-                        <span className="ptlog-rest-line" />
-                        <span>{Math.floor(restTimer.remaining / 60)}:{String(restTimer.remaining % 60).padStart(2, "0")}</span>
-                        <span className="ptlog-rest-line" />
-                        <button className="ptlog-btn-x" type="button" onClick={() => setRestTimer(null)} aria-label="Pause überspringen"><X size={13} /></button>
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-              <button className="ptlog-btn" type="button" onClick={() => addSetToEntry(entry.id)} style={{ marginTop: 6 }}><Plus size={12} /> Satz</button>
-                </div>
-              </React.Fragment>
             );
           });
         })()}
