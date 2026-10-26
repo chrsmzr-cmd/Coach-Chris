@@ -2619,6 +2619,7 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
   const [expandedDayId, setExpandedDayId] = useState(null);
   const [printPlan, setPrintPlan] = useState(null);
   const [previewDay, setPreviewDay] = useState(null);
+  const [transferDay, setTransferDay] = useState(null);
   const [schedulingId, setSchedulingId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(todayISO());
   const [f, setF] = useState({ name: "", days: emptyPlanDays() });
@@ -2682,6 +2683,7 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
     <div>
       {printPlan && <PrintablePlan plan={printPlan} exercises={exercises} coacheeName={coacheeName} />}
       {previewDay && <DayPreviewModal day={previewDay} exercises={exercises} onClose={() => setPreviewDay(null)} />}
+      {transferDay && <DayTransferModal day={transferDay} plans={plans} editingId={editingId} coachees={coachees} coacheeId={coacheeId} setPlans={setPlans} onClose={() => setTransferDay(null)} />}
       {!showForm ? (
         <>
           <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div>
@@ -2753,6 +2755,9 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
                     {!d.isRestDay && (
                       <button className="ptlog-btn-x" onClick={() => setPreviewDay(d)} aria-label="Vorschau: So sieht es der Coachee"><Eye size={15} /></button>
+                    )}
+                    {!d.isRestDay && d.groups.length > 0 && (
+                      <button className="ptlog-btn-x" onClick={() => setTransferDay(d)} aria-label="Workout in anderen Plan kopieren" title="In anderen Plan kopieren"><Send size={15} /></button>
                     )}
                     {!d.isRestDay && (
                       <select value="" onChange={(e) => { if (e.target.value !== "") swapDayContent(d.id, Number(e.target.value)); }} title="Auf einen anderen Wochentag verschieben" style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}>
@@ -2878,6 +2883,101 @@ function DayContentPreview({ day, exercises, onExerciseClick }) {
         ))
       )}
     </>
+  );
+}
+
+/* ---------- Einzelnes Workout (Tag) in einen anderen Plan übernehmen ---------- */
+function cloneDayContent(day) {
+  const groups = JSON.parse(JSON.stringify(day.groups || [])).map((g) => ({ ...g, id: uid(), items: (g.items || []).map((it) => ({ ...it, id: uid() })) }));
+  return { isRestDay: false, sessionName: day.sessionName || "", note: day.note || "", isBaseline: !!day.isBaseline, groups };
+}
+function DayTransferModal({ day, plans, editingId, coachees, coacheeId, setPlans, onClose }) {
+  const [targetCoachee, setTargetCoachee] = useState(coacheeId);
+  const [targetPlans, setTargetPlans] = useState(null);
+  const [targetPlanId, setTargetPlanId] = useState("");
+  const [targetWeekday, setTargetWeekday] = useState(day.weekday);
+  const [status, setStatus] = useState("");
+  const sameCoachee = targetCoachee === coacheeId;
+
+  useEffect(() => {
+    setTargetPlanId("");
+    if (sameCoachee) { setTargetPlans(plans.filter((pl) => pl.id !== editingId)); return; }
+    setTargetPlans(null);
+    let alive = true;
+    (async () => { const list = (await loadKey(`plans-${targetCoachee}`)) || []; if (alive) setTargetPlans(list); })();
+    return () => { alive = false; };
+  }, [targetCoachee]);
+
+  const targetPlan = (targetPlans || []).find((pl) => pl.id === targetPlanId);
+  const targetDay = targetPlan ? (targetPlan.days || []).find((d) => d.weekday === Number(targetWeekday)) : null;
+  const targetHasContent = !!targetDay && !targetDay.isRestDay && (targetDay.groups || []).length > 0;
+
+  const doTransfer = async () => {
+    if (!targetPlan) return;
+    setStatus("…");
+    const content = cloneDayContent(day);
+    const nextPlans = (targetPlans || []).map((pl) => {
+      if (pl.id !== targetPlanId) return pl;
+      const hasDay = (pl.days || []).some((d) => d.weekday === Number(targetWeekday));
+      const days = hasDay
+        ? pl.days.map((d) => (d.weekday === Number(targetWeekday) ? { ...d, ...content } : d))
+        : [...(pl.days || []), { id: uid(), weekday: Number(targetWeekday), label: WEEKDAY_ABBR[Number(targetWeekday)].toLowerCase() + ".", ...content }];
+      return { ...pl, days };
+    });
+    if (sameCoachee) {
+      // Der gerade bearbeitete Plan bleibt unangetastet; nur die anderen Pläne werden ersetzt.
+      setPlans(plans.map((pl) => nextPlans.find((n) => n.id === pl.id) || pl));
+    } else {
+      const ok = await saveKey(`plans-${targetCoachee}`, nextPlans);
+      if (!ok) { setStatus("Speichern fehlgeschlagen - bitte erneut versuchen."); return; }
+    }
+    setStatus("Übernommen ✓");
+    setTimeout(onClose, 900);
+  };
+
+  return (
+    <div className="ptlog-modal-overlay" onClick={onClose}>
+      <div className="ptlog-modal" onClick={(e) => e.stopPropagation()} style={{ padding: 18 }}>
+        <div className="ptlog-row-between" style={{ marginBottom: 10 }}>
+          <div>
+            <span className="ptlog-eyebrow">Workout in anderen Plan kopieren</span>
+            <h3 style={{ margin: 0 }}>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h3>
+          </div>
+          <button className="ptlog-btn-x" onClick={onClose}><X size={16} /></button>
+        </div>
+        <p className="ptlog-muted" style={{ marginTop: 0, fontSize: 13 }}>Das Original bleibt unverändert. Übungen, Sätze, Supersätze und Notizen werden kopiert.</p>
+        {(coachees || []).length > 1 && (
+          <Field label="Coachee">
+            <select value={targetCoachee} onChange={(e) => setTargetCoachee(e.target.value)}>
+              {coachees.map((c) => (<option key={c.id} value={c.id}>{c.name}{c.id === coacheeId ? " (aktueller Coachee)" : ""}</option>))}
+            </select>
+          </Field>
+        )}
+        <Field label="Zielplan">
+          <select value={targetPlanId} onChange={(e) => setTargetPlanId(e.target.value)} disabled={targetPlans === null}>
+            <option value="">{targetPlans === null ? "Lade…" : (targetPlans.length ? "Plan wählen…" : "Keine anderen Pläne vorhanden")}</option>
+            {(targetPlans || []).map((pl) => (<option key={pl.id} value={pl.id}>{pl.name}{pl.active ? " (aktiv)" : ""}</option>))}
+          </select>
+        </Field>
+        <Field label="Wochentag im Zielplan">
+          <select value={targetWeekday} onChange={(e) => setTargetWeekday(Number(e.target.value))}>
+            {WEEKDAY_FULL.map((name, idx) => (<option key={idx} value={idx}>{name}</option>))}
+          </select>
+        </Field>
+        {targetHasContent && (
+          <p className="ptlog-goal-banner" style={{ borderColor: COLORS.warn }}>
+            Achtung: {WEEKDAY_FULL[Number(targetWeekday)]} im Zielplan enthält bereits „{targetDay.sessionName || "Training"}" und wird ersetzt.
+          </p>
+        )}
+        {targetPlan && targetPlan.active && sameCoachee && (
+          <p className="ptlog-muted" style={{ fontSize: 12 }}>Der Zielplan ist aktiv - die Änderung gilt sofort für den Coachee.</p>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <button className="ptlog-btn primary" onClick={doTransfer} disabled={!targetPlan || status === "…"}>{targetHasContent ? "Ersetzen & kopieren" : "Kopieren"}</button>
+          {status && <span className="ptlog-muted" style={{ fontSize: 13 }}>{status}</span>}
+        </div>
+      </div>
+    </div>
   );
 }
 
