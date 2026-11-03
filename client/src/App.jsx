@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { WORKOUT_TEMPLATES, templateFamily, FAMILY_ORDER, templateExerciseSpec } from "./templates.js";
 import {
   LineChart,
   Line,
@@ -370,6 +371,7 @@ function summarizeItemTarget(item) {
   if (allSame) return `${item.sets.length}× ${formatSetTarget(first)}`;
   return item.sets.map(formatSetTarget).join(" · ");
 }
+const rirLabel = (item) => (item && String(item.rir ?? "").trim() !== "" ? `RiR ${String(item.rir).trim()}` : "");
 function isSuperset(g) {
   return g.type ? g.type === "superset" : g.items.length > 1;
 }
@@ -2163,11 +2165,13 @@ function CoachTrainingView({ exercises, setExercises, plans, setPlans, profile, 
       <div className="ptlog-mode-tabs">
         <button className={"ptlog-mode-btn" + (sub === "plans" ? " active" : "")} onClick={() => setSub("plans")}>Pläne</button>
         <button className={"ptlog-mode-btn" + (sub === "history" ? " active" : "")} onClick={() => setSub("history")}>Verlauf</button>
+        <button className={"ptlog-mode-btn" + (sub === "templates" ? " active" : "")} onClick={() => setSub("templates")}>Vorlagen</button>
         <button className={"ptlog-mode-btn" + (sub === "library" ? " active" : "")} onClick={() => setSub("library")}>Übungen</button>
         <button className={"ptlog-mode-btn" + (sub === "calendar" ? " active" : "")} onClick={() => setSub("calendar")}>Kalender</button>
       </div>
       <div className="ptlog-card">
-        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} setExercises={setExercises} onActivate={onActivatePlan} coachees={coachees} coacheeId={coacheeId} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
+        {sub === "plans" && <PlanManager plans={plans} setPlans={setPlans} exercises={exercises} setExercises={setExercises} onActivate={onActivatePlan} sessions={sessions} coachees={coachees} coacheeId={coacheeId} coacheeName={coachees.find((c) => c.id === coacheeId)?.name} />}
+        {sub === "templates" && <TemplateLibrary exercises={exercises} setExercises={setExercises} plans={plans} setPlans={setPlans} coachees={coachees} coacheeId={coacheeId} />}
         {sub === "history" && <SessionHistoryList sessions={sessions} exercises={exercises} />}
         {sub === "library" && <ExerciseLibraryManager exercises={exercises} setExercises={setExercises} />}
         {sub === "calendar" && <CoachCalendar sessions={sessions} exercises={exercises} profile={profile} plans={plans} planHistory={planHistory} nutrition={nutrition} />}
@@ -2579,6 +2583,163 @@ function SetRowsEditor({ sets, onChange, unit = "kg" }) {
 
 const WEEKDAY_ABBR = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const WEEKDAY_FULL = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+/* ---------- Intelligente Planvorschläge (regelbasiert, auf Basis der bisherigen Leistungen) ---------- */
+const parseNumList = (v) => { const m = String(v ?? "").match(/\d+(?:[.,]\d+)?/g); return m ? m.map((x) => Number(x.replace(",", "."))) : []; };
+const toNum = (v) => Number(String(v ?? "").replace(",", ".")) || 0;
+const roundHalf = (n) => Math.round(n * 2) / 2;
+
+function suggestItem(item, perfSets, { deload, baseline }) {
+  const keep = (reason, kind = "keep") => ({ sets: item.sets, kind, reason });
+  if (baseline) return keep("Ist-Stand-Test - unverändert");
+  const unitLabel = item.unit === "min" ? "Min" : "kg";
+  const loadWord = item.unit === "min" ? "Dauer" : "Gewicht";
+  const maxW = Math.max(0, ...item.sets.map((st) => toNum(st.weight)));
+  const scale = (factor) => item.sets.map((st) => (toNum(st.weight) > 0 ? { ...st, weight: String(roundHalf(toNum(st.weight) * factor)) } : st));
+
+  if (deload) {
+    return maxW > 0 ? { sets: scale(0.9), kind: "down", reason: `Entlastung: ${loadWord} −10 %` } : keep("Entlastung: Umfang halten, saubere Technik");
+  }
+  if (!perfSets.length) return keep("Noch keine Daten aus dem Plan - unverändert");
+
+  const total = perfSets.length;
+  const doneSets = perfSets.filter((st) => st.done);
+  const done = doneSets.length;
+  const completion = done / total;
+  if (perfSets.some((st) => st.pain)) return keep("Schmerz gemeldet - unverändert, bitte abklären", "warn");
+  if (completion < 0.7) {
+    return maxW > 0 ? { sets: scale(0.95), kind: "down", reason: `Nur ${done}/${total} Sätze geschafft - ${loadWord} −5 %` } : keep(`Nur ${done}/${total} Sätze geschafft - unverändert`);
+  }
+  const rirNums = parseNumList(item.rir);
+  const rpeLimit = rirNums.length ? 10 - Math.min(...rirNums) : 8.5; // geplante RiR 0-1 -> RPE bis 10 ist im Soll
+  const rpes = perfSets.map((st) => toNum(st.rpe)).filter((x) => x > 0);
+  const avgRpe = rpes.length ? Math.round((rpes.reduce((a, b) => a + b, 0) / rpes.length) * 10) / 10 : null;
+  const hits = doneSets.filter((st) => {
+    const tg = st.target || {};
+    const tr = parseNumList(tg.reps);
+    const aReps = toNum(st.reps);
+    const repOk = !tr.length || !aReps || aReps >= Math.max(...tr);
+    const tW = toNum(tg.weight), aW = toNum(st.weight);
+    return repOk && (!tW || !aW || aW >= tW);
+  }).length;
+  const hitRate = done ? hits / done : 0;
+  const isRange = item.sets.some((st) => /\d\s*[-–]\s*\d/.test(String(st.reps ?? "")));
+  const below = doneSets.filter((st) => {
+    const tr = parseNumList((st.target || {}).reps);
+    const aReps = toNum(st.reps);
+    return tr.length > 1 && aReps > 0 && aReps < Math.min(...tr);
+  }).length;
+  if (maxW > 0 && done && below / done >= 0.5) {
+    return { sets: scale(0.95), kind: "down", reason: `Unter dem Wiederholungsbereich (${below}/${done} Sätze) - ${loadWord} −5 %` };
+  }
+
+  if (completion >= 0.9 && hitRate >= 0.8 && (avgRpe === null || avgRpe <= rpeLimit)) {
+    const rpeTxt = avgRpe !== null ? `, RPE Ø ${avgRpe}` : "";
+    const actualMaxW = Math.max(0, ...doneSets.map((st) => toNum(st.weight)));
+    if (maxW > 0) {
+      const base = Math.max(maxW, actualMaxW);
+      const step = Math.max(1, roundHalf(base * 0.05));
+      return { sets: scale((base + step) / maxW), kind: "up", reason: `${done}/${total} Sätze, Ziel erreicht${rpeTxt} → +${step} ${unitLabel}` };
+    }
+    if (isRange) return keep(`Obergrenze erreicht${rpeTxt} - Zusatzgewicht oder schwerere Variante prüfen`);
+    if (item.sets.some((st) => parseNumList(st.reps).length)) {
+      return { sets: item.sets.map((st) => (parseNumList(st.reps).length ? { ...st, reps: String(st.reps).replace(/\d+/g, (m) => String(Number(m) + 1)) } : st)), kind: "up", reason: `${done}/${total} Sätze, Ziel erreicht${rpeTxt} → +1 Wdh.` };
+    }
+    return keep("Ziel erreicht - keine Wiederholungs-/Gewichtsvorgabe zum Steigern");
+  }
+  if (avgRpe !== null && avgRpe > rpeLimit) return keep(`RPE Ø ${avgRpe} - über der geplanten Intensität${rirNums.length ? ` (RiR ${item.rir})` : ""}, Belastung halten`);
+  if (isRange) return keep(`Im Wiederholungsbereich, Obergrenze noch nicht überall erreicht (${Math.round(hitRate * 100)} %) - ${loadWord} halten, Wdh. steigern`);
+  return keep(`Zielwerte nur zu ${Math.round(hitRate * 100)} % erreicht - Belastung halten`);
+}
+
+function buildPlanSuggestion({ basePlan, sessions, mode }) {
+  const planSessions = sessions.filter((x) => x.planId === basePlan.id).sort((a, b) => (b.finishedAt || b.date).localeCompare(a.finishedAt || a.date));
+  const block = basePlan.progressionBlock || 0;
+  const deload = mode === "deload" || (mode === "auto" && block >= 3);
+  const changes = [];
+  const days = (basePlan.days || []).map((day) => {
+    const groups = (day.groups || []).map((g) => ({
+      ...g, id: uid(),
+      items: g.items.map((item) => {
+        const recent = planSessions.filter((x) => x.entries.some((e) => e.exerciseId === item.exerciseId)).slice(0, 2);
+        const perfSets = recent.flatMap((x) => x.entries.filter((e) => e.exerciseId === item.exerciseId).flatMap((e) => e.sets));
+        const res = suggestItem(item, perfSets, { deload, baseline: !!day.isBaseline });
+        const newItem = { ...JSON.parse(JSON.stringify(item)), id: uid(), sets: JSON.parse(JSON.stringify(res.sets)) };
+        changes.push({ weekday: day.weekday, dayName: day.sessionName || "Training", exerciseId: item.exerciseId, from: summarizeItemTarget(item), to: summarizeItemTarget(newItem), kind: res.kind, reason: res.reason });
+        return newItem;
+      }),
+    }));
+    return { ...day, id: uid(), groups };
+  });
+  const plan = {
+    ...basePlan, id: uid(), name: `${basePlan.name.replace(/^Vorschlag: /, "")} - Folgeplan`, active: false, scheduledActivationDate: null,
+    days, progressionBlock: deload ? 0 : block + 1, suggestedFrom: basePlan.id,
+  };
+  return { plan, changes, deload, sessionCount: planSessions.length, block };
+}
+
+function PlanSuggestionPanel({ plans, sessions, exercises, onAdopt, onClose }) {
+  const defaultBase = (plans.find((p) => p.active) || plans[plans.length - 1] || {}).id || "";
+  const [baseId, setBaseId] = useState(defaultBase);
+  const [mode, setMode] = useState("auto");
+  const basePlan = plans.find((p) => p.id === baseId);
+  const result = useMemo(() => (basePlan ? buildPlanSuggestion({ basePlan, sessions, mode }) : null), [basePlan, sessions, mode]);
+  const nameOf = (id) => exercises.find((e) => e.id === id)?.name || "?";
+  const sym = { up: "↑", down: "↓", keep: "=", warn: "⚠" };
+  const col = { up: COLORS.good, down: COLORS.accent, keep: COLORS.muted, warn: COLORS.warn };
+  const changed = result ? result.changes.filter((c) => c.kind === "up" || c.kind === "down").length : 0;
+  const byDay = {};
+  (result?.changes || []).forEach((c) => { (byDay[c.weekday] = byDay[c.weekday] || { name: c.dayName, rows: [] }).rows.push(c); });
+
+  return (
+    <div className="ptlog-block-card" style={{ marginBottom: 14 }}>
+      <div className="ptlog-row-between" style={{ marginBottom: 8 }}>
+        <strong>💡 Vorschlag für den nächsten Plan</strong>
+        <button className="ptlog-btn-x" onClick={onClose}><X size={14} /></button>
+      </div>
+      <p className="ptlog-muted" style={{ fontSize: 12, marginTop: 0 }}>Basiert auf den absolvierten Einheiten des gewählten Plans (Sätze geschafft, Zielwerte erreicht, RPE, Schmerz). Der Vorschlag wird als normaler Entwurf geöffnet - du kannst alles anpassen, speichern und wie jeden Plan aktivieren.</p>
+      <div className="ptlog-grid-2">
+        <Field label="Ausgangsplan">
+          <select value={baseId} onChange={(e) => setBaseId(e.target.value)}>
+            {plans.map((p) => (<option key={p.id} value={p.id}>{p.name}{p.active ? " (aktiv)" : ""}</option>))}
+          </select>
+        </Field>
+        <Field label="Art">
+          <select value={mode} onChange={(e) => setMode(e.target.value)}>
+            <option value="auto">Automatisch</option>
+            <option value="progress">Steigern</option>
+            <option value="deload">Entlastung (−10 %)</option>
+          </select>
+        </Field>
+      </div>
+      {result && (
+        <>
+          <p style={{ fontSize: 13, margin: "4px 0 8px" }}>
+            {result.sessionCount === 0
+              ? "Für diesen Plan gibt es noch keine absolvierten Einheiten - der Vorschlag entspricht einer Kopie."
+              : `${result.sessionCount} Einheit${result.sessionCount !== 1 ? "en" : ""} ausgewertet · ${changed} Änderung${changed !== 1 ? "en" : ""}`}
+            {result.deload && <strong style={{ color: COLORS.accent }}> · Entlastungsplan{mode === "auto" ? ` (nach ${result.block} Steigerungsblöcken)` : ""}</strong>}
+          </p>
+          {Object.entries(byDay).map(([wd, day]) => (
+            <div key={wd} style={{ marginBottom: 8 }}>
+              <div className="ptlog-block-group-label" style={{ marginBottom: 4 }}>{WEEKDAY_FULL[wd]} · {day.name}</div>
+              {day.rows.map((c, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: 6, fontSize: 13, padding: "3px 0" }}>
+                  <span style={{ color: col[c.kind], fontWeight: 700 }}>{sym[c.kind]}</span>
+                  <div>
+                    <div>{nameOf(c.exerciseId)}: <span className="ptlog-muted">{c.from}</span>{c.from !== c.to && <> → <strong>{c.to}</strong></>}</div>
+                    <div className="ptlog-muted" style={{ fontSize: 12 }}>{c.reason}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+          <button className="ptlog-btn primary wide" onClick={() => onAdopt(result.plan)} style={{ marginTop: 6 }}>Als Entwurf übernehmen &amp; bearbeiten</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function emptyPlanDays() {
   return WEEKDAY_FULL.map((name, idx) => ({
     id: uid(), weekday: idx, label: WEEKDAY_ABBR[idx].toLowerCase() + ".",
@@ -2601,7 +2762,7 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
               <ul>
                 {g.items.map((item) => {
                   const ex = exercises.find((e) => e.id === item.exerciseId);
-                  return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget(item)}{item.note ? ` (${item.note})` : ""}</li>);
+                  return (<li key={item.id}>{ex ? ex.name : "?"} — {summarizeItemTarget(item)}{rirLabel(item) ? ` · ${rirLabel(item)}` : ""}{item.note ? ` (${item.note})` : ""}</li>);
                 })}
               </ul>
             </div>
@@ -2613,7 +2774,8 @@ function PrintablePlan({ plan, exercises, coacheeName }) {
 }
 
 /* ================= Trainingspläne — direkt mit Inhalt pro Tag (Coach) ================= */
-function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActivate, coachees, coacheeId, coacheeName }) {
+function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActivate, coachees, coacheeId, coacheeName, sessions = [] }) {
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expandedDayId, setExpandedDayId] = useState(null);
@@ -2663,6 +2825,7 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
   const updateItemSets = (dayId, gid, itemId, sets) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, sets } : i)) } : g)) }));
   const updateItemRest = (dayId, gid, itemId, restSeconds) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, restSeconds } : i)) } : g)) }));
   const updateItemUnit = (dayId, gid, itemId, unit) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, unit, sets: i.sets.map((s) => ({ ...s, unit })) } : i)) } : g)) }));
+  const updateItemRir = (dayId, gid, itemId, rir) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, rir } : i)) } : g)) }));
   const updateItemNote = (dayId, gid, itemId, note) => updateDay(dayId, (d) => ({ ...d, groups: d.groups.map((g) => (g.id === gid ? { ...g, items: g.items.map((i) => (i.id === itemId ? { ...i, note } : i)) } : g)) }));
 
   const save = () => {
@@ -2686,7 +2849,11 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
       {transferDay && <DayTransferModal day={transferDay} plans={plans} editingId={editingId} coachees={coachees} coacheeId={coacheeId} setPlans={setPlans} onClose={() => setTransferDay(null)} />}
       {!showForm ? (
         <>
-          <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div>
+          <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><div style={{ display: "flex", gap: 6 }}>{plans.length > 0 && <button className="ptlog-btn" onClick={() => setSuggestOpen(!suggestOpen)}>💡 Vorschlag</button>}<button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div></div>
+          {suggestOpen && plans.length > 0 && (
+            <PlanSuggestionPanel plans={plans} sessions={sessions} exercises={exercises} onClose={() => setSuggestOpen(false)}
+              onAdopt={(plan) => { setF(plan); setEditingId(null); setShowForm(true); setExpandedDayId(null); setSuggestOpen(false); }} />
+          )}
           {plans.length === 0 && <p className="ptlog-muted">Noch kein Plan angelegt.</p>}
           <ul className="ptlog-entry-list">
             {plans.map((p) => (
@@ -2816,9 +2983,15 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
                                       <span>Notiz für den Coachee (z. B. Ausführungshinweis)</span>
                                       <textarea rows={2} value={item.note || ""} onChange={(e) => updateItemNote(d.id, g.id, item.id, e.target.value)} placeholder="z. B. locker traben, auf saubere Technik achten…" />
                                     </div>
-                                    <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
-                                      <span>Pause zwischen Sätzen (Sek.)</span>
-                                      <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(d.id, g.id, item.id, Number(e.target.value))} />
+                                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                      <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
+                                        <span>Pause zwischen Sätzen (Sek.)</span>
+                                        <input type="number" min="0" step="15" value={item.restSeconds ?? 90} onChange={(e) => updateItemRest(d.id, g.id, item.id, Number(e.target.value))} />
+                                      </div>
+                                      <div className="ptlog-field" style={{ marginTop: 6, maxWidth: 160 }}>
+                                        <span>RiR (Wdh. in Reserve)</span>
+                                        <input value={item.rir ?? ""} onChange={(e) => updateItemRir(d.id, g.id, item.id, e.target.value)} placeholder="z. B. 1 oder 0-1" />
+                                      </div>
                                     </div>
                                   </div>
                                 );
@@ -2872,7 +3045,7 @@ function DayContentPreview({ day, exercises, onExerciseClick }) {
                   <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                   <div className="ptlog-exercise-info">
                     <strong>{ex ? ex.name : "?"}</strong>
-                    <span className="ptlog-muted">{summarizeItemTarget(item)}</span>
+                    <span className="ptlog-muted">{summarizeItemTarget(item)}{rirLabel(item) ? ` · ${rirLabel(item)}` : ""}</span>
                     {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
                   </div>
                   {isSuperset(g) && <span className="ptlog-letter-badge">{String.fromCharCode(65 + ii)}</span>}
@@ -2895,7 +3068,7 @@ function DayTransferModal({ day, plans, editingId, coachees, coacheeId, setPlans
   const [targetCoachee, setTargetCoachee] = useState(coacheeId);
   const [targetPlans, setTargetPlans] = useState(null);
   const [targetPlanId, setTargetPlanId] = useState("");
-  const [targetWeekday, setTargetWeekday] = useState(day.weekday);
+  const [targetWeekday, setTargetWeekday] = useState(day.weekday ?? 0);
   const [status, setStatus] = useState("");
   const sameCoachee = targetCoachee === coacheeId;
 
@@ -2941,7 +3114,7 @@ function DayTransferModal({ day, plans, editingId, coachees, coacheeId, setPlans
         <div className="ptlog-row-between" style={{ marginBottom: 10 }}>
           <div>
             <span className="ptlog-eyebrow">Workout in anderen Plan kopieren</span>
-            <h3 style={{ margin: 0 }}>{WEEKDAY_FULL[day.weekday]}{day.sessionName ? ` · ${day.sessionName}` : ""}</h3>
+            <h3 style={{ margin: 0 }}>{day.weekday != null ? WEEKDAY_FULL[day.weekday] : ""}{day.weekday != null && day.sessionName ? " · " : ""}{day.sessionName || ""}</h3>
           </div>
           <button className="ptlog-btn-x" onClick={onClose}><X size={16} /></button>
         </div>
@@ -2977,6 +3150,124 @@ function DayTransferModal({ day, plans, editingId, coachees, coacheeId, setPlans
           {status && <span className="ptlog-muted" style={{ fontSize: 13 }}>{status}</span>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Workout-Vorlagen (aus den Trainingsplan-Tabellen des Coaches) ---------- */
+const TEMPLATE_SPREAD = { 1: [0], 2: [0, 3], 3: [0, 2, 4], 4: [0, 1, 3, 4], 5: [0, 1, 2, 3, 4], 6: [0, 1, 2, 3, 4, 5] };
+function resolveTemplateExercises(templates, exercises) {
+  const list = [...exercises];
+  const norm = (n) => String(n || "").trim().toLowerCase();
+  const byName = new Map(list.map((e) => [norm(e.name), e]));
+  let added = 0;
+  const idFor = (row) => {
+    const spec = templateExerciseSpec(row);
+    const hit = (spec.seedName && byName.get(norm(spec.seedName))) || byName.get(norm(spec.name));
+    if (hit) return hit.id;
+    const ex = { id: uid(), name: spec.name, category: spec.category, equipment: spec.equipment, muscles: spec.muscles, instructions: "", images: [], goalTags: [], baseline: null };
+    list.push(ex); byName.set(norm(ex.name), ex); added += 1;
+    return ex.id;
+  };
+  const restFor = (row) => ((parseNumList(row.reps)[0] || 10) <= 8 ? 150 : 90);
+  const days = templates.map((t) => ({
+    sessionName: t.title.replace(/^\d+\./, ""),
+    groups: t.rows.map((row) => ({
+      id: uid(), type: "normal", purpose: "training", rounds: 1,
+      items: [{ id: uid(), exerciseId: idFor(row), restSeconds: restFor(row), unit: "kg", note: "", rir: row.rir || "", sets: Array.from({ length: Number(row.sets) || 1 }, () => ({ reps: row.reps, weight: "", distance: "", unit: "kg" })) }],
+    })),
+  }));
+  return { exercises: list, added, days };
+}
+
+function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, coacheeId }) {
+  const [open, setOpen] = useState({});
+  const [selected, setSelected] = useState([]);
+  const [planName, setPlanName] = useState("");
+  const [transferDay, setTransferDay] = useState(null);
+  const [msg, setMsg] = useState("");
+  const families = FAMILY_ORDER.map((fam) => ({ fam, items: WORKOUT_TEMPLATES.filter((t) => templateFamily(t.title) === fam) })).filter((x) => x.items.length);
+  const ready = exercises.length > 0;
+  const blocked = () => { setMsg("Die Übungsliste ist noch nicht geladen - bitte kurz warten oder die Seite neu laden."); return true; };
+
+  const copyToPlan = (t) => {
+    if (!ready) return blocked();
+    const r = resolveTemplateExercises([t], exercises);
+    if (r.added > 0) setExercises(r.exercises);
+    setMsg("");
+    setTransferDay({ weekday: null, isBaseline: false, note: "", sessionName: r.days[0].sessionName, groups: r.days[0].groups });
+  };
+  const toggle = (title) => setSelected((prev) => (prev.includes(title) ? prev.filter((x) => x !== title) : prev.length >= 6 ? prev : [...prev, title]));
+  const createPlan = () => {
+    if (!ready) return blocked();
+    const chosen = selected.map((title) => WORKOUT_TEMPLATES.find((t) => t.title === title)).filter(Boolean);
+    if (!chosen.length || !planName.trim()) return;
+    const r = resolveTemplateExercises(chosen, exercises);
+    if (r.added > 0) setExercises(r.exercises);
+    const wds = TEMPLATE_SPREAD[chosen.length];
+    const days = emptyPlanDays().map((d) => {
+      const i = wds.indexOf(d.weekday);
+      return i < 0 ? d : { ...d, isRestDay: false, sessionName: r.days[i].sessionName, groups: r.days[i].groups };
+    });
+    setPlans([...plans, { id: uid(), name: planName.trim(), active: plans.length === 0, days }]);
+    setSelected([]); setPlanName("");
+    setMsg(`Plan „${planName.trim()}" angelegt (${chosen.length} Trainingstage) - du findest ihn unter „Pläne" und kannst ihn dort anpassen und aktivieren.`);
+  };
+  const setCount = (t) => t.rows.reduce((a, r) => a + (Number(r.sets) || 0), 0);
+
+  return (
+    <div>
+      {transferDay && <DayTransferModal day={transferDay} plans={plans} editingId={null} coachees={coachees} coacheeId={coacheeId} setPlans={setPlans} onClose={() => setTransferDay(null)} />}
+      <h3 style={{ marginTop: 0 }}>Workout-Vorlagen</h3>
+      <p className="ptlog-muted" style={{ fontSize: 13, marginTop: 0 }}>Deine Trainingspläne als Bausteine: einzelne Workouts in einen Plan kopieren oder mehrere auswählen (max. 6) und daraus direkt einen neuen Plan erstellen. Gewichte trägst du danach im Plan ein.</p>
+      {msg && <p className="ptlog-goal-banner">{msg}</p>}
+      {selected.length > 0 && (
+        <div className="ptlog-block-card" style={{ marginBottom: 12 }}>
+          <strong>{selected.length} Workout{selected.length !== 1 ? "s" : ""} ausgewählt</strong>
+          <div className="ptlog-muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>{selected.join(" · ")} - werden automatisch auf die Wochentage verteilt.</div>
+          <div className="ptlog-add-row">
+            <input placeholder="Name des neuen Plans" value={planName} onChange={(e) => setPlanName(e.target.value)} style={{ flex: 1 }} />
+            <button className="ptlog-btn primary" onClick={createPlan} disabled={!planName.trim()}>Plan erstellen</button>
+            <button className="ptlog-btn" onClick={() => setSelected([])}>Leeren</button>
+          </div>
+        </div>
+      )}
+      {families.map(({ fam, items }) => (
+        <div key={fam} style={{ marginBottom: 14 }}>
+          <div className="ptlog-block-group-label" style={{ marginBottom: 6 }}>{fam}</div>
+          {items.map((t) => {
+            const isOpen = !!open[t.title];
+            const isSel = selected.includes(t.title);
+            return (
+              <div key={t.title} className="ptlog-day-card">
+                <div className="ptlog-day-card-header" onClick={() => setOpen({ ...open, [t.title]: !isOpen })}>
+                  <div>
+                    <strong>{t.title}</strong>
+                    <div className="ptlog-entry-macros">{t.rows.length} Übungen · {setCount(t)} Sätze</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
+                    <label className="ptlog-checkbox" title="Für neuen Plan auswählen">
+                      <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle(t.title)} /> Auswahl
+                    </label>
+                    <button className="ptlog-btn" onClick={() => copyToPlan(t)}><Send size={13} /> In Plan</button>
+                    <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, cursor: "pointer" }} onClick={() => setOpen({ ...open, [t.title]: !isOpen })} />
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="ptlog-day-card-body">
+                    {t.rows.map((r, i) => (
+                      <div key={i} className="ptlog-row-between" style={{ fontSize: 13, padding: "3px 0", gap: 8 }}>
+                        <span>{templateExerciseSpec(r).name}</span>
+                        <span className="ptlog-muted" style={{ whiteSpace: "nowrap" }}>{r.sets}× {r.reps} · RiR {r.rir}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
@@ -3054,7 +3345,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       isBaseline: !!day.isBaseline, date: todayISO(), startedAt: new Date().toISOString(),
       entries: day.groups.flatMap((g) => g.items.map((item, ii) => ({
         id: uid(), exerciseId: item.exerciseId, groupId: g.id, groupType: isSuperset(g) ? "superset" : "normal", groupRounds: g.rounds || 1, groupLetter: isSuperset(g) ? String.fromCharCode(65 + ii) : null,
-        restSeconds: item.restSeconds ?? 90, coachNote: item.note || "",
+        restSeconds: item.restSeconds ?? 90, coachNote: item.note || "", rir: item.rir || "",
         sets: expandItemSets(item, g).map((s) => ({ target: { ...s }, reps: "", weight: "", distance: "", unit: item.unit || "kg", rpe: "", pain: false, done: false })),
         clientNote: "",
       }))),
@@ -3210,6 +3501,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                   <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
                   <strong>{ex ? ex.name : "?"}</strong>
                   {withLetter && <span className="ptlog-letter-badge">{entry.groupLetter}</span>}
+                  {entry.rir ? <span className="ptlog-tag-mini">RiR {entry.rir}</span> : null}
                 </div>
                 {entry.coachNote && <div className="ptlog-coach-note-banner">📝 {entry.coachNote}</div>}
               </>
@@ -3412,14 +3704,30 @@ function SessionHistoryList({ sessions, exercises, limit, editable, setSessions 
                 </div>
               ) : (
                 <div className="ptlog-history-exercises">
-                  {s.entries.map((e) => {
+                  {s.entries.map((e, ei) => {
                     const ex = exercises.find((x) => x.id === e.exerciseId);
                     const doneCount = e.sets.filter((st) => st.done).length;
-                    const targetSummary = summarizeItemTarget({ sets: e.sets.map((st) => st.target || {}) });
+                    const isSs = e.groupType === "superset" && e.groupLetter;
+                    const startsGroup = isSs && s.entries[ei - 1]?.groupId !== e.groupId;
                     return (
                       <div key={e.id} className="ptlog-history-exercise-block">
-                        <span>{ex ? ex.name : "?"}</span>
-                        <span className="ptlog-muted" style={{ fontSize: 12 }}>Soll {targetSummary} · Ist {bestSetText(e)} · {doneCount}/{e.sets.length} Sätze</span>
+                        {startsGroup && <div className="ptlog-block-group-label superset" style={{ marginBottom: 4 }}>Super Set · {e.groupRounds} Runde{e.groupRounds !== 1 ? "n" : ""}</div>}
+                        <div className="ptlog-row-between">
+                          <strong>{ex ? ex.name : "?"}{isSs && <span className="ptlog-letter-badge" style={{ marginLeft: 6 }}>{e.groupLetter}</span>}</strong>
+                          <span className="ptlog-muted" style={{ fontSize: 12 }}>{doneCount}/{e.sets.length} Sätze</span>
+                        </div>
+                        {e.coachNote && <span className="ptlog-muted" style={{ fontSize: 12 }}>📝 {e.coachNote}</span>}
+                        {e.sets.map((st, si) => {
+                          const hasValues = st.weight !== "" || st.reps !== "" || st.distance;
+                          return (
+                            <div key={si} className={"ptlog-history-set" + (st.done ? "" : " open")}>
+                              <span className="ptlog-muted">{si + 1}</span>
+                              <span className="ptlog-history-set-ist">{hasValues ? formatLoggedSet({ ...st, unit: st.unit || e.unit }) : "–"}</span>
+                              <span className="ptlog-muted ptlog-history-set-soll">Soll {formatSetTarget(st.target || {})}</span>
+                              <span className={st.done ? "ptlog-history-set-ok" : "ptlog-muted"}>{st.done ? "✓" : "offen"}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
@@ -3862,6 +4170,11 @@ const CSS = `
 .ptlog-history-exercise-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
 .ptlog-history-exercise-block { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .ptlog-history-exercise-block:last-child { border-bottom: none; }
+.ptlog-history-set { display: grid; grid-template-columns: 18px 1fr auto 40px; gap: 8px; align-items: baseline; font-size: 13px; padding: 2px 0; }
+.ptlog-history-set.open { opacity: 0.6; }
+.ptlog-history-set-soll { font-size: 11px; }
+.ptlog-history-set-ok { color: var(--good); text-align: right; font-weight: 600; }
+.ptlog-history-set > span:last-child { text-align: right; font-size: 12px; }
 .ptlog-history-feedback { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; }
 .ptlog-schedule-badge { font-size: 11px; color: var(--accent); margin-top: 2px; }
 .ptlog-resume-banner { background: rgba(255,143,94,0.14); border: 1px solid var(--accent); color: var(--accent); font-size: 14px; font-weight: 600; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; cursor: pointer; }
