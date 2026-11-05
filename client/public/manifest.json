@@ -3,7 +3,7 @@
   "short_name": "Coaching-Logbuch",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#101820",
-  "theme_color": "#101820",
+  "background_color": "#F5F2EC",
+  "theme_color": "#F5F2EC",
   "icons": []
 }

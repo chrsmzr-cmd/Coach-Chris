@@ -42,15 +42,15 @@ import {
 
 /* ---------- Farbtoken (JS-Pendant zu den CSS-Variablen, für Recharts) ---------- */
 const COLORS = {
-  bg: "#101820",
-  surface: "#182430",
-  surface2: "#1F2E3B",
-  border: "#2B3B48",
-  text: "#EAF2F5",
-  muted: "#8DA0AC",
-  accent: "#FF8F5E",
-  good: "#4ADE9E",
-  warn: "#FF6B6B",
+  bg: "var(--bg)",
+  surface: "var(--surface)",
+  surface2: "var(--surface2)",
+  border: "var(--border)",
+  text: "var(--text)",
+  muted: "var(--muted)",
+  accent: "var(--accent)",
+  good: "var(--good)",
+  warn: "var(--warn)",
 };
 
 const GOAL_LABELS = { abnehmen: "Abnehmen", halten: "Gewicht halten", aufbauen: "Muskelaufbau" };
@@ -444,13 +444,47 @@ function getPreviousSetRef(sessions, exerciseId, excludeSessionId, setIdx) {
   if (!s) return null;
   return formatSetTarget({ reps: s.reps, weight: s.weight, distance: s.distance });
 }
+/* Letzter tatsächlicher Satz derselben Übung (gleicher Satz-Index, sonst der letzte Satz) - Basis für die Vorbelegung */
+function getPreviousSetObj(sessions, exerciseId, excludeSessionId, setIdx) {
+  const past = sessions.filter((x) => x.id !== excludeSessionId && x.entries.some((e) => e.exerciseId === exerciseId)).sort((a, b) => (b.finishedAt || b.date).localeCompare(a.finishedAt || a.date));
+  for (const sess of past) {
+    const sets = sess.entries.filter((e) => e.exerciseId === exerciseId).flatMap((e) => e.sets).filter((st) => st.done || st.weight || st.reps);
+    if (sets.length) return sets[setIdx] || sets[sets.length - 1];
+  }
+  return null;
+}
+/* Vorschlagswerte für einen noch leeren Satz: Gewicht = Plan-Vorgabe, sonst letztes Mal; Wdh. = feste Vorgabe, sonst letztes Mal, sonst Untergrenze des Bereichs */
+function suggestSetValues(sessions, entry, setIdx, excludeSessionId) {
+  const s = entry.sets[setIdx] || {};
+  const t = s.target || {};
+  const prev = getPreviousSetObj(sessions, entry.exerciseId, excludeSessionId, setIdx);
+  const tW = Number(String(t.weight ?? "").replace(",", "."));
+  const pW = prev ? Number(String(prev.weight ?? "").replace(",", ".")) : 0;
+  const weight = tW > 0 ? String(t.weight).replace(",", ".") : pW > 0 ? String(prev.weight).replace(",", ".") : "";
+  const nums = String(t.reps ?? "").match(/\d+/g) || [];
+  let reps = "";
+  if (nums.length === 1) reps = nums[0];
+  else if (prev && Number(prev.reps) > 0) reps = String(prev.reps);
+  else if (nums.length > 1) reps = nums[0];
+  return { weight, reps };
+}
+function playRestBeep() {
+  try {
+    if (navigator.vibrate) navigator.vibrate([250, 100, 250]);
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const c = new AC(); const o = c.createOscillator(); const g = c.createGain();
+    o.connect(g); g.connect(c.destination); o.frequency.value = 880; g.gain.value = 0.15; o.start();
+    setTimeout(() => { try { o.stop(); c.close(); } catch (e) { /* ignore */ } }, 400);
+  } catch (e) { /* Ton ist nur ein Zusatz */ }
+}
 function previousMaxWeight(sessions, exerciseId) {
   let max = 0;
   sessions.forEach((s) => s.entries.forEach((e) => { if (e.exerciseId === exerciseId) e.sets.forEach((st) => { const w = Number(st.weight) || 0; if (w > max) max = w; }); }));
   return max;
 }
 function sessionVolume(session) {
-  return session.entries.reduce((sum, e) => sum + e.sets.reduce((s2, s) => s2 + (Number(s.weight) || 0) * (Number(s.reps) || 0), 0), 0);
+  return session.entries.reduce((sum, e) => sum + e.sets.reduce((s2, s) => s2 + (s.done ? (Number(s.weight) || 0) * (Number(s.reps) || 0) : 0), 0), 0);
 }
 function sessionCompletionPercent(session) {
   const total = session.entries.reduce((s, e) => s + e.sets.length, 0);
@@ -478,7 +512,7 @@ function computeTopProgress(sessions, exercises, limit = 3) {
 /* ---------- Avatar, Skins & Erfolge ---------- */
 const AVATAR_EMOJIS = ["🙂", "😄", "🦁", "🐯", "🐻", "🦊", "🐼", "🐸", "🐧", "🦉", "🐺", "🐨", "🐵", "🦄", "🐲", "🥷"];
 const SKINS = [
-  { id: "default", name: "Standard", ring: "#2B3B48", badge: null },
+  { id: "default", name: "Standard", ring: "var(--border)", badge: null },
   { id: "bronze", name: "Bronze-Ring", ring: "linear-gradient(135deg,#CD8155,#8B5A2B)", badge: null },
   { id: "compass", name: "Kompass", ring: "linear-gradient(135deg,#4ADE9E,#1F8F63)", badge: "🧭" },
   { id: "silver", name: "Silber-Ring", ring: "linear-gradient(135deg,#E3E8ED,#8D97A0)", badge: null },
@@ -749,6 +783,14 @@ export default function CoachingLogbuch() {
   const [loadingCoachee, setLoadingCoachee] = useState(false);
   const [tab, setTab] = useState("overview");
   const [role, setRole] = useState(null);
+  const [theme, setTheme] = useState("light");
+  useEffect(() => { loadKey("theme", false).then((t) => { if (t === "dark" || t === "light") setTheme(t); }); }, []);
+  useEffect(() => {
+    document.body.style.background = theme === "dark" ? "#0A1016" : "#E9E5DC";
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute("content", theme === "dark" ? "#101820" : "#F5F2EC");
+  }, [theme]);
+  const toggleTheme = () => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); saveKey("theme", next, false); };
   const [coaches, setCoaches] = useState([]);
   const [selectedCoachId, setSelectedCoachId] = useState(null);
   const [coachees, setCoachees] = useState([]);
@@ -941,20 +983,20 @@ export default function CoachingLogbuch() {
   const TABS = role === "coachee" ? TABS_COACHEE : TABS_COACH;
 
   if (!loadingGlobal && !privacyAck) {
-    return (<div className="ptlog-root"><style>{CSS}</style><PrivacyNotice onAck={acknowledgePrivacy} /></div>);
+    return (<div className="ptlog-root" data-theme={theme}><style>{CSS}</style><PrivacyNotice onAck={acknowledgePrivacy} /></div>);
   }
   if (!loadingGlobal && !role) {
-    return (<div className="ptlog-root"><style>{CSS}</style><RoleGate onChoose={chooseRole} /></div>);
+    return (<div className="ptlog-root" data-theme={theme}><style>{CSS}</style><RoleGate onChoose={chooseRole} /></div>);
   }
   if (!loadingGlobal && role === "coach" && !selectedCoachId) {
-    return (<div className="ptlog-root"><style>{CSS}</style><CoachIdentityGate coaches={coaches} onSelect={selectCoach} onCreate={createCoach} onBack={leaveRole} /></div>);
+    return (<div className="ptlog-root" data-theme={theme}><style>{CSS}</style><CoachIdentityGate coaches={coaches} onSelect={selectCoach} onCreate={createCoach} onBack={leaveRole} /></div>);
   }
   if (!loadingGlobal && role === "coachee" && !selectedCoacheeId) {
-    return (<div className="ptlog-root"><style>{CSS}</style><CoacheeIdentityGate coachees={coachees} onSelect={selectCoachee} onCreate={createCoachee} onBack={leaveRole} /></div>);
+    return (<div className="ptlog-root" data-theme={theme}><style>{CSS}</style><CoacheeIdentityGate coachees={coachees} onSelect={selectCoachee} onCreate={createCoachee} onBack={leaveRole} /></div>);
   }
 
   return (
-    <div className="ptlog-root">
+    <div className="ptlog-root" data-theme={theme}>
       <style>{CSS}</style>
 
       <header className="ptlog-header">
@@ -967,10 +1009,11 @@ export default function CoachingLogbuch() {
           <span className="ptlog-eyebrow">Coaching-Logbuch · {role === "coachee" ? "Coachee-Ansicht" : `Coach: ${coaches.find((c) => c.id === selectedCoachId)?.name || ""}`}</span>
           <h1>{profile ? profile.name : selectedCoacheeId ? (coachees.find((c) => c.id === selectedCoacheeId)?.name || "Coachee") : "Alle Coachees"}</h1>
         </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {role === "coach" && selectedCoacheeId && <button className="ptlog-role-leave" onClick={leaveCoachee}>Alle Coachees</button>}
           {role === "coach" && <button className="ptlog-role-leave" onClick={switchCoach}>Coach wechseln</button>}
           <button className="ptlog-role-leave" onClick={leaveRole}>Rolle wechseln</button>
+          <button className="ptlog-theme-btn" onClick={toggleTheme} aria-label="Hell/Dunkel umschalten">{theme === "dark" ? "☀️ Hell" : "🌙 Dunkel"}</button>
         </div>
       </header>
 
@@ -1347,7 +1390,7 @@ function Overview({ profile, nutrition, weights, sessions, exercises, checkins, 
         <StatCard label="Training diese Woche" value={`${sessionsThisWeek}`} unit="×" sub={lastSession ? `zuletzt: ${lastSession.workoutName}` : "noch kein Eintrag"} tone="neutral" />
       </div>
 
-      {(targets.kcal || targets.protein) && (
+      {!!(targets.kcal || targets.protein) && (
         <div className="ptlog-card"><h3>Bedarfsdeckung heute</h3><NutrientChart totals={totals} targets={targets} /></div>
       )}
 
@@ -1490,7 +1533,7 @@ function MacroHistory({ profile, nutrition }) {
               <XAxis dataKey="name" stroke={COLORS.muted} fontSize={10} tickLine={false} axisLine={false} interval={0} />
               <YAxis stroke={COLORS.muted} fontSize={11} tickLine={false} axisLine={false} domain={[0, maxY]} />
               {targets.kcal > 0 && <ReferenceLine y={targets.kcal} stroke={COLORS.muted} strokeDasharray="4 4" />}
-              <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} formatter={(v) => [v + " kcal", "Kalorien"]} contentStyle={{ background: COLORS.surface2, border: "1px solid " + COLORS.border, borderRadius: 8 }} />
+              <Tooltip cursor={{ fill: "rgba(128,128,128,0.12)" }} formatter={(v) => [v + " kcal", "Kalorien"]} contentStyle={{ background: COLORS.surface2, border: "1px solid " + COLORS.border, borderRadius: 8 }} />
               <Bar dataKey="kcal" radius={[4, 4, 0, 0]}>
                 {chartData.map((d, i) => (<Cell key={i} fill={!d.logged ? COLORS.border : targets.kcal && d.kcal > targets.kcal * 1.1 ? COLORS.warn : COLORS.accent} />))}
               </Bar>
@@ -1566,7 +1609,7 @@ function NutrientChart({ totals, targets }) {
           <XAxis dataKey="name" stroke={COLORS.muted} fontSize={12} tickLine={false} axisLine={false} />
           <YAxis stroke={COLORS.muted} fontSize={11} tickLine={false} axisLine={false} domain={[0, maxPct]} tickFormatter={(v) => v + "%"} />
           <ReferenceLine y={100} stroke={COLORS.muted} strokeDasharray="4 4" />
-          <Tooltip content={<NutrientTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+          <Tooltip content={<NutrientTooltip />} cursor={{ fill: "rgba(128,128,128,0.12)" }} />
           <Bar dataKey="pct" radius={[6, 6, 0, 0]} maxBarSize={44}>
             {data.map((d, i) => (<Cell key={i} fill={d.pct > 100 ? COLORS.warn : COLORS.accent} />))}
           </Bar>
@@ -3246,10 +3289,10 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
                     <div className="ptlog-entry-macros">{t.rows.length} Übungen · {setCount(t)} Sätze</div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
-                    <label className="ptlog-checkbox" title="Für neuen Plan auswählen">
-                      <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle(t.title)} /> Auswahl
+                    <label className="ptlog-checkbox" title="Für neuen Plan auswählen" aria-label="Für neuen Plan auswählen">
+                      <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle(t.title)} style={{ width: 20, height: 20 }} />
                     </label>
-                    <button className="ptlog-btn" onClick={() => copyToPlan(t)}><Send size={13} /> In Plan</button>
+                    <button className="ptlog-btn" style={{ whiteSpace: "nowrap" }} onClick={() => copyToPlan(t)}><Send size={13} /> In Plan</button>
                     <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, cursor: "pointer" }} onClick={() => setOpen({ ...open, [t.title]: !isOpen })} />
                   </div>
                 </div>
@@ -3312,7 +3355,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       const saved = await loadKey(`active-session-${coacheeId}`);
       if (saved && saved.session) {
         setActiveSession(saved.session);
-        setRestTimer(saved.restTimer || null);
+        setRestTimer(saved.restTimer && saved.restTimer.endsAt && saved.restTimer.endsAt > Date.now() ? saved.restTimer : null);
         setView("session");
       }
       setResumeChecked(true);
@@ -3331,11 +3374,14 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
     return () => clearInterval(t);
   }, [view]);
 
+  const restRemaining = restTimer ? Math.min(restTimer.total, Math.max(0, Math.ceil((restTimer.endsAt - nowTick) / 1000))) : 0;
   useEffect(() => {
-    if (!restTimer || restTimer.remaining <= 0) return;
-    const t = setTimeout(() => setRestTimer((prev) => (prev ? { ...prev, remaining: prev.remaining - 1 } : null)), 1000);
+    if (!restTimer || restRemaining > 0) return;
+    if (!restTimer.done) { playRestBeep(); setRestTimer((prev) => (prev ? { ...prev, done: true } : prev)); }
+    const t = setTimeout(() => setRestTimer(null), 4000);
     return () => clearTimeout(t);
-  }, [restTimer]);
+  }, [restTimer, restRemaining]);
+  const [extraOpen, setExtraOpen] = useState({});
 
   const pauseSession = () => { setView("home"); flash("Training pausiert — du kannst später genau hier weitermachen"); };
 
@@ -3363,14 +3409,28 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
   const setEntryUnit = (entryId, unit) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, unit, sets: e.sets.map((s) => ({ ...s, unit, target: { ...s.target, unit } })) } : e)) }));
   const addSetToEntry = (entryId) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: [...e.sets, { target: { unit: e.unit || "kg" }, reps: "", weight: "", distance: "", unit: e.unit || "kg", rpe: "", pain: false, done: false }] } : e)) }));
   const updateEntrySet = (entryId, setIdx, key, val) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => (i === setIdx ? { ...s, [key]: val } : s)) } : e)) }));
+  const stepWeight = (entry, si, dir) => {
+    const st = entry.sets[si];
+    const isMin = (st.target.unit || entry.unit) === "min";
+    const sug = suggestSetValues(sessions, entry, si, activeSession.id);
+    const base = Number(String(st.weight || sug.weight || 0).replace(",", ".")) || 0;
+    const next = Math.max(0, Math.round((base + dir * (isMin ? 1 : 2.5)) * 100) / 100);
+    updateEntrySet(entry.id, si, "weight", String(next));
+  };
   const toggleSetDone = (entryId, setIdx) => {
     setActiveSession((prev) => {
       const entry = prev.entries.find((e) => e.id === entryId);
       const wasDone = entry.sets[setIdx].done;
       const groupMembers = entry.groupType === "superset" && entry.groupId ? prev.entries.filter((e) => e.groupId === entry.groupId) : [];
       const isLastInRound = groupMembers.length < 2 || groupMembers[groupMembers.length - 1].id === entry.id;
-      if (!wasDone && isLastInRound) setRestTimer({ entryId, setIdx, remaining: entry.restSeconds || 90, total: entry.restSeconds || 90 });
-      return { ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => (i === setIdx ? { ...s, done: !s.done } : s)) } : e)) };
+      if (!wasDone && isLastInRound) { const tot = entry.restSeconds || 90; setRestTimer({ entryId, setIdx, total: tot, endsAt: Date.now() + tot * 1000 }); }
+      // Ein Tap: leere Felder übernehmen beim Abhaken die Vorschlagswerte (Plan-Vorgabe bzw. letztes Mal)
+      const sug = !wasDone ? suggestSetValues(sessions, entry, setIdx, prev.id) : null;
+      return { ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => {
+        if (i !== setIdx) return s;
+        if (wasDone) return { ...s, done: false };
+        return { ...s, done: true, weight: s.weight === "" || s.weight == null ? sug.weight : s.weight, reps: s.reps === "" || s.reps == null ? sug.reps : s.reps };
+      }) } : e)) };
     });
   };
   const updateEntryNote = (entryId, note) => setActiveSession((prev) => ({ ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, clientNote: note } : e)) }));
@@ -3382,7 +3442,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
     let prCount = 0;
     activeSession.entries.forEach((e) => {
       const prevMax = previousMaxWeight(sessions, e.exerciseId);
-      const newMax = Math.max(0, ...e.sets.map((s) => Number(s.weight) || 0));
+      const newMax = Math.max(0, ...e.sets.filter((s) => s.done).map((s) => Number(s.weight) || 0));
       if (newMax > 0 && newMax > prevMax) prCount += 1;
     });
     const finalSession = { ...activeSession, finishedAt, durationSeconds, volume, prCount };
@@ -3413,7 +3473,19 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
     return (
       <div className="ptlog-section" style={{ paddingBottom: 70 }}>
         <h2>Wie war das Training?</h2>
-        <p className="ptlog-muted" style={{ marginTop: -8 }}>{pendingFeedback.workoutName} · {formatDuration(pendingFeedback.durationSeconds)}</p>
+        <p className="ptlog-muted" style={{ marginTop: -8 }}>{pendingFeedback.workoutName}</p>
+        {(() => {
+          const all = pendingFeedback.entries.flatMap((e) => e.sets);
+          const doneCount = all.filter((st) => st.done).length;
+          return (
+            <div className="ptlog-summary-grid">
+              <div><strong>{formatDuration(pendingFeedback.durationSeconds)}</strong><span>Dauer</span></div>
+              <div><strong>{doneCount}/{all.length}</strong><span>Sätze</span></div>
+              <div><strong>{Math.round(pendingFeedback.volume || 0).toLocaleString("de-DE")} kg</strong><span>Volumen</span></div>
+              <div><strong>{pendingFeedback.prCount || 0}</strong><span>{pendingFeedback.prCount === 1 ? "Rekord" : "Rekorde"}</span></div>
+            </div>
+          );
+        })()}
         <div className="ptlog-card">
           <div className="ptlog-checkin-row">
             <span>Gefühl</span>
@@ -3446,13 +3518,14 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
     const elapsed = Math.max(0, Math.round((nowTick - new Date(activeSession.startedAt).getTime()) / 1000));
     return (
       <div className="ptlog-section" style={{ paddingBottom: 70 }}>
-        <div className="ptlog-row-between">
+        <div className="ptlog-row-between" style={{ flexWrap: "wrap", gap: 8 }}>
           <h2 style={{ marginBottom: 0 }}>{activeSession.workoutName}</h2>
           <div style={{ display: "flex", gap: 6 }}>
-            <span className="ptlog-chip neutral">{sessionCompletionPercent(activeSession)}% geschafft</span>
+            <span className="ptlog-chip neutral">{activeSession.entries.filter((e) => e.sets.length > 0 && e.sets.every((st) => st.done)).length} von {activeSession.entries.length} Übungen</span>
             <span className="ptlog-chip neutral">{formatDuration(elapsed)}</span>
           </div>
         </div>
+        <div className="ptlog-progress" aria-label="Fortschritt"><div style={{ width: sessionCompletionPercent(activeSession) + "%" }} /></div>
         <div className="ptlog-row-between" style={{ marginTop: -6, marginBottom: 8 }}>
           <p className="ptlog-muted" style={{ margin: 0 }}>{fmtDate(activeSession.date)}</p>
           <button className="ptlog-btn" onClick={pauseSession}>⏸ Pausieren</button>
@@ -3466,30 +3539,37 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
             const si = from + k;
             const prevRef = getPreviousSetRef(sessions, entry.exerciseId, activeSession.id, si);
             const unitLabel = (s.target.unit || entry.unit) === "min" ? "Min" : "kg";
+            const sug = suggestSetValues(sessions, entry, si, activeSession.id);
+            const extraKey = entry.id + "-" + si;
+            const showExtra = !!extraOpen[extraKey] || !!s.rpe || s.pain;
             return (
               <React.Fragment key={si}>
-                <div className={"ptlog-settable-row" + (s.done ? " done" : "")}>
-                  <span className="ptlog-muted">{si + 1}</span>
-                  <span className="ptlog-settable-prev">{prevRef || "—"}</span>
-                  <input type="number" placeholder={s.target.weight || unitLabel} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
-                  <input type="number" placeholder={s.target.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
-                  <button type="button" className={"ptlog-check-btn" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={14} /></button>
-                </div>
-                {s.target.distance || s.distance ? (
-                  <input className="ptlog-settable-distance" placeholder={s.target.distance || "Strecke/Zeit"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
-                ) : null}
-                <div className="ptlog-log-setrow-extra">
-                  <input type="number" min="1" max="10" placeholder="RPE" value={s.rpe} onChange={(e) => updateEntrySet(entry.id, si, "rpe", e.target.value)} />
-                  <button type="button" className={"ptlog-pain-btn" + (s.pain ? " active" : "")} onClick={() => updateEntrySet(entry.id, si, "pain", !s.pain)}>⚠️ Schmerz</button>
-                </div>
-                {restTimer && restTimer.entryId === entry.id && restTimer.setIdx === si && restTimer.remaining > 0 && (
-                  <div className="ptlog-rest-timer-inline">
-                    <span className="ptlog-rest-line" />
-                    <span>{Math.floor(restTimer.remaining / 60)}:{String(restTimer.remaining % 60).padStart(2, "0")}</span>
-                    <span className="ptlog-rest-line" />
-                    <button className="ptlog-btn-x" type="button" onClick={() => setRestTimer(null)} aria-label="Pause überspringen"><X size={13} /></button>
+                <div className={"ptlog-setcard" + (s.done ? " done" : "")}>
+                  <div className="ptlog-setcard-top">
+                    <strong>Satz {si + 1}</strong>
+                    <span className="ptlog-settable-prev">{s.target.reps || s.target.weight ? `Ziel ${formatSetTarget(s.target)}` : ""}{prevRef ? `${s.target.reps || s.target.weight ? " · " : ""}zuletzt ${prevRef}` : ""}</span>
                   </div>
-                )}
+                  <div className="ptlog-setcard-inputs">
+                    <div className="ptlog-stepper">
+                      <button type="button" aria-label={`${unitLabel} weniger`} onClick={() => stepWeight(entry, si, -1)}>−</button>
+                      <input type="number" inputMode="decimal" step="any" aria-label={unitLabel} placeholder={sug.weight || unitLabel} value={s.weight} onChange={(e) => updateEntrySet(entry.id, si, "weight", e.target.value)} />
+                      <button type="button" aria-label={`${unitLabel} mehr`} onClick={() => stepWeight(entry, si, 1)}>+</button>
+                    </div>
+                    <input className="ptlog-reps-input" type="number" inputMode="numeric" aria-label="Wiederholungen" placeholder={sug.reps || "Wdh."} value={s.reps} onChange={(e) => updateEntrySet(entry.id, si, "reps", e.target.value)} />
+                    <button type="button" aria-label="Satz abhaken" className={"ptlog-check-big" + (s.done ? " done" : "")} onClick={() => toggleSetDone(entry.id, si)}><Check size={22} /></button>
+                  </div>
+                  {s.target.distance || s.distance ? (
+                    <input className="ptlog-settable-distance" style={{ margin: "6px 0 0" }} placeholder={s.target.distance || "Strecke/Zeit"} value={s.distance} onChange={(e) => updateEntrySet(entry.id, si, "distance", e.target.value)} />
+                  ) : null}
+                  {showExtra ? (
+                    <div className="ptlog-log-setrow-extra" style={{ margin: "8px 0 0" }}>
+                      <input type="number" inputMode="decimal" min="1" max="10" placeholder="RPE" value={s.rpe} onChange={(e) => updateEntrySet(entry.id, si, "rpe", e.target.value)} />
+                      <button type="button" className={"ptlog-pain-btn" + (s.pain ? " active" : "")} onClick={() => updateEntrySet(entry.id, si, "pain", !s.pain)}>⚠️ Schmerz</button>
+                    </div>
+                  ) : (
+                    <button type="button" className="ptlog-extra-toggle" onClick={() => setExtraOpen({ ...extraOpen, [extraKey]: true })}>RPE / Schmerz angeben</button>
+                  )}
+                </div>
               </React.Fragment>
             );
           });
@@ -3530,7 +3610,6 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                       {members.map((m, mi) => (
                         <div key={m.id} style={mi > 0 ? { marginTop: 10 } : undefined}>
                           {renderHead(m, true)}
-                          {renderSetHeader(m)}
                           {renderSets(m, r * base[mi], r === R - 1 ? m.sets.length : (r + 1) * base[mi])}
                         </div>
                       ))}
@@ -3551,7 +3630,6 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
                     <button type="button" className={"ptlog-mode-btn" + (entry.unit === "min" ? " active" : "")} onClick={() => setEntryUnit(entry.id, "min")}>Minuten</button>
                   </div>
                 )}
-                {renderSetHeader(entry)}
                 {renderSets(entry, 0, entry.sets.length)}
                 <button className="ptlog-btn" type="button" onClick={() => addSetToEntry(entry.id)} style={{ marginTop: 6 }}><Plus size={12} /> Satz</button>
               </div>
@@ -3563,7 +3641,17 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
             <ExercisePicker exercises={exercises} onPick={addAdHocExercise} placeholder="Übung hinzufügen…" setExercises={setExercises} />
           </div>
         )}
-        <button className="ptlog-btn primary wide sticky-bottom" onClick={finishSession}>Einheit abschließen</button>
+        {restTimer && (
+          <div className={"ptlog-rest-dock" + (restRemaining === 0 ? " over" : "")} role="timer">
+            <div className="ptlog-rest-dock-bar" style={{ width: (restRemaining === 0 ? 100 : Math.max(0, Math.min(100, (restRemaining / restTimer.total) * 100))) + "%" }} />
+            <span className="ptlog-rest-dock-time">{restRemaining === 0 ? "Pause vorbei - los geht's!" : `Pause ${Math.floor(restRemaining / 60)}:${String(restRemaining % 60).padStart(2, "0")}`}</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              {restRemaining > 0 && <button type="button" className="ptlog-btn" onClick={() => setRestTimer({ ...restTimer, total: restTimer.total + 15, endsAt: restTimer.endsAt + 15000 })}>+15 s</button>}
+              <button type="button" className="ptlog-btn" onClick={() => setRestTimer(null)}>{restRemaining === 0 ? "OK" : "Überspringen"}</button>
+            </div>
+          </div>
+        )}
+        <button className="ptlog-btn primary wide sticky-bottom" onClick={finishSession} style={restTimer ? { bottom: 72 } : undefined}>Einheit abschließen</button>
         {modalExerciseId && (
           <ExerciseDetailModal
             exercise={exercises.find((e) => e.id === modalExerciseId)}
@@ -3905,21 +3993,27 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
 
 .ptlog-root {
-  --bg: #101820; --surface: #182430; --surface2: #1F2E3B; --border: #2B3B48;
-  --text: #EAF2F5; --muted: #8DA0AC; --accent: #FF8F5E; --good: #4ADE9E; --warn: #FF6B6B;
+  --bg: #F5F2EC; --surface: #FFFFFF; --surface2: #F0ECE4; --border: #E4DFD6;
+  --text: #1E2227; --muted: #6F747A; --accent: #2F7D5B; --good: #2F7D5B; --warn: #C0392B;
+  --on-accent: #FFFFFF; --dock: #1E2227; --dock-tx: #FFFFFF; --shadow: 0 2px 14px rgba(30,34,39,0.07);
   font-family: 'Inter', sans-serif; color: var(--text); background: var(--bg);
   max-width: 720px; margin: 0 auto; padding: 18px 16px 40px; line-height: 1.5; border-radius: 18px;
+}
+.ptlog-root[data-theme="dark"] {
+  --bg: #101820; --surface: #182430; --surface2: #1F2E3B; --border: #2B3B48;
+  --text: #EAF2F5; --muted: #8DA0AC; --accent: #FF8F5E; --good: #4ADE9E; --warn: #FF6B6B;
+  --on-accent: #1A1006; --dock: #182430; --dock-tx: #FF8F5E; --shadow: none;
 }
 .ptlog-root * { box-sizing: border-box; }
 
 .ptlog-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.ptlog-avatar { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), #FFB088); color: #1A1006; display: flex; align-items: center; justify-content: center; font-family: 'Sora', sans-serif; font-weight: 700; font-size: 17px; flex-shrink: 0; }
+.ptlog-avatar { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 65%, white)); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-family: 'Sora', sans-serif; font-weight: 700; font-size: 17px; flex-shrink: 0; }
 .ptlog-header-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .ptlog-eyebrow { font-size: 11px; color: var(--muted); }
 .ptlog-header h1 { font-family: 'Sora', sans-serif; font-weight: 600; font-size: 21px; margin: 1px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ptlog-role-switch { display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
 .ptlog-role-switch button { font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500; background: transparent; border: none; color: var(--muted); padding: 6px 12px; border-radius: 999px; cursor: pointer; }
-.ptlog-role-switch button.active { background: var(--accent); color: #1A1006; font-weight: 600; }
+.ptlog-role-switch button.active { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .ptlog-role-leave { font-family: 'Inter', sans-serif; font-size: 11px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 6px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 
 .ptlog-gate { display: flex; flex-direction: column; gap: 6px; padding: 60px 8px 20px; text-align: left; }
@@ -3942,7 +4036,7 @@ const CSS = `
 
 .ptlog-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; }
 .ptlog-tab { font-family: 'Inter', sans-serif; font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); padding: 8px 14px; cursor: pointer; border-radius: 999px; white-space: nowrap; flex-shrink: 0; }
-.ptlog-tab.active { background: var(--accent); border-color: var(--accent); color: #1A1006; font-weight: 600; }
+.ptlog-tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 
 .ptlog-section h2 { font-family: 'Sora', sans-serif; font-size: 19px; margin: 0 0 14px; }
 .ptlog-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; }
@@ -3958,8 +4052,8 @@ const CSS = `
 .ptlog-hero-value { font-family: 'Sora', sans-serif; font-size: 40px; font-weight: 700; line-height: 1; }
 .ptlog-hero-unit { font-size: 15px; color: var(--muted); }
 .ptlog-chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface2); color: var(--muted); margin-left: auto; }
-.ptlog-chip.good { background: rgba(74,222,158,0.14); color: var(--good); }
-.ptlog-chip.neutral { background: rgba(255,143,94,0.14); color: var(--accent); }
+.ptlog-chip.good { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good); }
+.ptlog-chip.neutral { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 .ptlog-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ptlog-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: end; }
@@ -3975,7 +4069,7 @@ const CSS = `
 .ptlog-checkbox { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 
 .ptlog-btn { font-family: 'Inter', sans-serif; font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 9px 15px; cursor: pointer; border-radius: 9px; }
-.ptlog-btn.primary { background: var(--accent); color: #1A1006; border-color: var(--accent); font-weight: 600; }
+.ptlog-btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 .ptlog-btn.wide { width: 100%; justify-content: center; }
 .ptlog-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .ptlog-btn-x { background: transparent; border: none; color: var(--warn); display: inline-flex; align-items: center; cursor: pointer; padding: 4px; border-radius: 6px; flex-shrink: 0; }
@@ -3984,8 +4078,8 @@ const CSS = `
 .ptlog-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
 @media (max-width: 560px) { .ptlog-stat-grid { grid-template-columns: 1fr 1fr; } }
 .ptlog-stat-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; background: var(--surface); }
-.ptlog-stat-card.tone-good { border-color: rgba(74,222,158,0.4); }
-.ptlog-stat-card.tone-warn { border-color: rgba(255,107,107,0.4); }
+.ptlog-stat-card.tone-good { border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.ptlog-stat-card.tone-warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .ptlog-stat-label { font-size: 11px; color: var(--muted); }
 .ptlog-stat-value { font-family: 'Sora', sans-serif; font-size: 21px; font-weight: 600; }
 .ptlog-stat-unit { font-size: 12px; color: var(--muted); font-family: 'Inter', sans-serif; margin-left: 3px; }
@@ -3997,7 +4091,7 @@ const CSS = `
 
 .ptlog-mode-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
 .ptlog-mode-btn { font-family: 'Inter', sans-serif; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 7px 13px; cursor: pointer; border-radius: 999px; }
-.ptlog-mode-btn.active { background: var(--accent); color: #1A1006; border-color: var(--accent); font-weight: 600; }
+.ptlog-mode-btn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 
 .ptlog-food-search { position: relative; }
 .ptlog-suggest-list { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); max-height: 240px; overflow-y: auto; }
@@ -4007,7 +4101,7 @@ const CSS = `
 .ptlog-quickfood-chip:hover { border-color: var(--accent); }
 .ptlog-suggest-list li { padding: 9px 12px; display: flex; justify-content: space-between; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border); }
 .ptlog-suggest-list li:last-child { border-bottom: none; }
-.ptlog-suggest-list li:hover { background: rgba(255,143,94,0.08); }
+.ptlog-suggest-list li:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .ptlog-suggest-sub { color: var(--muted); }
 .ptlog-suggest-divider { cursor: default !important; font-size: 11px; color: var(--muted); background: var(--surface); }
 .ptlog-suggest-divider:hover { background: var(--surface) !important; }
@@ -4037,7 +4131,7 @@ const CSS = `
 .ptlog-muted { color: var(--muted); font-size: 13px; }
 .ptlog-loading { text-align: center; padding: 40px; color: var(--muted); }
 
-.ptlog-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #1A1006; display: flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; z-index: 50; }
+.ptlog-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: var(--on-accent); display: flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; z-index: 50; }
 
 /* Trainingsplanung */
 .ptlog-exercise-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
@@ -4047,13 +4141,13 @@ const CSS = `
 .ptlog-exercise-thumb.small { width: 40px; height: 40px; aspect-ratio: unset; border-radius: 8px; flex-shrink: 0; }
 .ptlog-exercise-info { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .ptlog-coach-note { font-size: 12px; color: var(--accent); font-style: italic; }
-.ptlog-coach-note-banner { background: rgba(255,143,94,0.12); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--accent); margin-bottom: 8px; }
-.ptlog-tag-mini { display: inline-block; font-size: 10px; background: rgba(74,222,158,0.16); color: var(--good); padding: 2px 7px; border-radius: 999px; margin-top: 3px; width: fit-content; }
-.ptlog-tag-mini.good { background: rgba(74,222,158,0.16); color: var(--good); }
+.ptlog-coach-note-banner { background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--accent); margin-bottom: 8px; }
+.ptlog-tag-mini { display: inline-block; font-size: 10px; background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); padding: 2px 7px; border-radius: 999px; margin-top: 3px; width: fit-content; }
+.ptlog-tag-mini.good { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 
 .ptlog-tag-picker { display: flex; flex-wrap: wrap; gap: 6px; }
 .ptlog-tag-btn { font-size: 12px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 6px 11px; border-radius: 999px; cursor: pointer; }
-.ptlog-tag-btn.active { background: var(--accent); color: #1A1006; border-color: var(--accent); font-weight: 600; }
+.ptlog-tag-btn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 .ptlog-tag-static { display: inline-block; font-size: 11px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 999px; margin: 0 6px 6px 0; }
 
 .ptlog-image-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
@@ -4077,7 +4171,7 @@ const CSS = `
 .ptlog-day-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .ptlog-weekday-picker { display: flex; gap: 3px; }
 .ptlog-weekday-btn { font-size: 11px; padding: 5px 7px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; cursor: pointer; }
-.ptlog-weekday-btn.active { background: var(--accent); color: #1A1006; border-color: var(--accent); font-weight: 600; }
+.ptlog-weekday-btn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 
 .ptlog-plan-days { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ptlog-plan-day { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface); }
@@ -4092,9 +4186,31 @@ const CSS = `
 .ptlog-log-setrow-extra { display: flex; gap: 6px; margin: -2px 0 8px 24px; }
 .ptlog-log-setrow-extra input { width: 60px; font-size: 12px; padding: 5px 8px; }
 .ptlog-pain-btn { font-size: 11px; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
-.ptlog-pain-btn.active { background: rgba(255,107,107,0.15); border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.ptlog-pain-btn.active { background: color-mix(in srgb, var(--warn) 15%, transparent); border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.ptlog-setcard { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+.ptlog-setcard.done { background: color-mix(in srgb, var(--good) 14%, transparent); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.ptlog-setcard-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.ptlog-setcard-inputs { display: grid; grid-template-columns: minmax(0,1fr) 72px 52px; gap: 8px; align-items: center; }
+.ptlog-stepper { display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; gap: 4px; align-items: center; }
+.ptlog-stepper button { height: 48px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text, inherit); font-size: 22px; cursor: pointer; }
+.ptlog-stepper input, .ptlog-reps-input { height: 48px; font-size: 18px; text-align: center; padding: 0 4px; }
+.ptlog-check-big { width: 52px; height: 48px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ptlog-check-big.done { background: var(--good); border-color: var(--good); color: var(--on-accent); }
+.ptlog-extra-toggle { margin-top: 6px; background: none; border: none; color: var(--muted); font-size: 12px; padding: 4px 0; cursor: pointer; text-decoration: underline; }
+.ptlog-progress { height: 6px; border-radius: 999px; background: var(--surface2); overflow: hidden; margin: 0 0 12px; }
+.ptlog-progress > div { height: 100%; background: var(--good); transition: width .25s; }
+.ptlog-rest-dock { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 40; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--surface); box-shadow: 0 6px 20px rgba(0,0,0,0.35); overflow: hidden; max-width: 640px; margin: 0 auto; }
+.ptlog-rest-dock.over { border-color: var(--good); }
+.ptlog-rest-dock-bar { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 16%, transparent); transition: width 1s linear; }
+.ptlog-rest-dock.over .ptlog-rest-dock-bar { background: color-mix(in srgb, var(--good) 20%, transparent); }
+.ptlog-rest-dock-time { position: relative; font-weight: 700; font-size: 16px; color: var(--accent); }
+.ptlog-rest-dock > div:last-child { position: relative; }
+.ptlog-summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+.ptlog-summary-grid > div { background: var(--surface2); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.ptlog-summary-grid strong { font-size: 20px; }
+.ptlog-summary-grid span { font-size: 12px; color: var(--muted); }
 .ptlog-check-btn { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.ptlog-check-btn.done { background: var(--good); border-color: var(--good); color: #0B2018; }
+.ptlog-check-btn.done { background: var(--good); border-color: var(--good); color: var(--on-accent); }
 
 .sticky-bottom { position: sticky; bottom: 10px; margin-top: 10px; }
 
@@ -4114,7 +4230,7 @@ const CSS = `
 
 .ptlog-chat { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; }
 .ptlog-chat-bubble { align-self: flex-start; max-width: 80%; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; font-size: 14px; }
-.ptlog-chat-bubble.mine { align-self: flex-end; background: rgba(255,143,94,0.14); border-color: var(--accent); }
+.ptlog-chat-bubble.mine { align-self: flex-end; background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: var(--accent); }
 .ptlog-chat-meta { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
 
 .ptlog-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 4px; }
@@ -4123,40 +4239,40 @@ const CSS = `
 .ptlog-cal-cell.empty { border: none; background: transparent; cursor: default; }
 .ptlog-cal-cell.is-today { border-color: var(--muted); font-weight: 700; }
 .ptlog-cal-cell.has-session { border-color: var(--accent); }
-.ptlog-cal-cell.selected { background: var(--accent); color: #1A1006; }
+.ptlog-cal-cell.selected { background: var(--accent); color: var(--on-accent); }
 .ptlog-cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.ptlog-cal-cell.selected .ptlog-cal-dot { background: #1A1006; }
+.ptlog-cal-cell.selected .ptlog-cal-dot { background: var(--on-accent); }
 .ptlog-cal-cell.status-matched { border-color: var(--good); }
 .ptlog-cal-cell.status-matched .ptlog-cal-dot { background: var(--good); }
 .ptlog-cal-cell.status-deviated { border-color: var(--accent); }
-.ptlog-cal-cell.status-missed { border-color: var(--warn); background: rgba(255,107,107,0.1); }
+.ptlog-cal-cell.status-missed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .ptlog-cal-cell.status-missed .ptlog-cal-dot { background: var(--warn); }
 .ptlog-cal-cell.status-caughtup { border-color: #5EA8E0; }
 .ptlog-cal-cell.status-caughtup .ptlog-cal-dot { background: #5EA8E0; }
 .ptlog-cal-cell.status-restday { opacity: 0.55; }
 .ptlog-week-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 12px; }
 .ptlog-week-chip { font-size: 10px; padding: 3px 7px; border-radius: 999px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
-.ptlog-week-chip.lit { background: rgba(255,143,94,0.16); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.ptlog-week-chip.lit { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .ptlog-cal-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px; color: var(--muted); margin: 4px 0 10px; }
 .ptlog-cal-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.ptlog-event-banner { background: rgba(255,143,94,0.14); border: 1px solid var(--accent); color: var(--accent); font-size: 13px; font-weight: 600; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+.ptlog-event-banner { background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--accent); color: var(--accent); font-size: 13px; font-weight: 600; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
 .ptlog-cal-flag { position: absolute; top: 2px; right: 3px; font-size: 9px; }
 .ptlog-event-line { font-size: 13px; font-weight: 600; color: var(--accent); margin: -4px 0 8px; }
 .ptlog-checkin-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; gap: 10px; }
 .ptlog-checkin-scale { display: flex; gap: 4px; }
 .ptlog-checkin-dot { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); font-size: 12px; cursor: pointer; }
-.ptlog-checkin-dot.active { background: var(--accent); border-color: var(--accent); color: #1A1006; font-weight: 700; }
+.ptlog-checkin-dot.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
 .ptlog-roster-warning { font-size: 11px; color: var(--warn); margin-top: 2px; }
 
 .ptlog-set-block { margin-bottom: 6px; }
 .ptlog-setrow-header { display: grid; grid-template-columns: 24px 60px 60px 1fr 26px; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
 .ptlog-settable-header { display: grid; grid-template-columns: 22px 1fr 55px 55px 32px; gap: 6px; font-size: 11px; color: var(--muted); margin: 6px 0 4px; }
 .ptlog-settable-row { display: grid; grid-template-columns: 22px 1fr 55px 55px 32px; gap: 6px; align-items: center; padding: 6px 4px; border-radius: 8px; margin-bottom: 2px; }
-.ptlog-settable-row.done { background: rgba(74,222,158,0.14); }
+.ptlog-settable-row.done { background: color-mix(in srgb, var(--good) 14%, transparent); }
 .ptlog-settable-prev { font-size: 12px; color: var(--muted); }
 .ptlog-settable-distance { width: 100%; margin: 0 0 6px 28px; font-size: 12px; }
 .ptlog-rest-timer-inline { display: grid; grid-template-columns: 1fr auto 1fr auto; align-items: center; gap: 8px; margin: 2px 0 8px; color: var(--accent); font-weight: 700; font-size: 13px; }
-.ptlog-rest-line { height: 1px; background: rgba(255,143,94,0.35); }
+.ptlog-rest-line { height: 1px; background: color-mix(in srgb, var(--accent) 35%, transparent); }
 .ptlog-prev-value { font-size: 11px; color: var(--muted); margin-bottom: 3px; padding-left: 24px; }
 .ptlog-rest-timer { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; margin-top: 8px; font-size: 13px; color: var(--accent); font-weight: 600; }
 
@@ -4177,7 +4293,7 @@ const CSS = `
 .ptlog-history-set > span:last-child { text-align: right; font-size: 12px; }
 .ptlog-history-feedback { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; }
 .ptlog-schedule-badge { font-size: 11px; color: var(--accent); margin-top: 2px; }
-.ptlog-resume-banner { background: rgba(255,143,94,0.14); border: 1px solid var(--accent); color: var(--accent); font-size: 14px; font-weight: 600; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; cursor: pointer; }
+.ptlog-resume-banner { background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--accent); color: var(--accent); font-size: 14px; font-weight: 600; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; cursor: pointer; }
 
 /* Avatar */
 .ptlog-avatar-display { border-radius: 50%; padding: 4px; display: flex; align-items: center; justify-content: center; position: relative; flex-shrink: 0; }
@@ -4185,9 +4301,32 @@ const CSS = `
 .ptlog-avatar-badge { position: absolute; bottom: -2px; right: -2px; background: var(--surface2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 .ptlog-emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 8px; }
 .ptlog-emoji-btn { font-size: 22px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 8px; cursor: pointer; }
-.ptlog-emoji-btn.active { border-color: var(--accent); background: rgba(255,143,94,0.14); }
+.ptlog-emoji-btn.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .ptlog-skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
 .ptlog-skin-card { display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 8px; cursor: pointer; font-size: 11px; color: var(--muted); }
 .ptlog-skin-card.active { border-color: var(--accent); color: var(--text); }
 .ptlog-skin-card.locked { opacity: 0.4; cursor: not-allowed; }
+
+/* ---------- Design B: hell, ruhig, eine Akzentfarbe ---------- */
+.ptlog-card { border-radius: 18px; box-shadow: var(--shadow); }
+.ptlog-block-card { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); }
+.ptlog-card .ptlog-block-card { background: var(--surface2); box-shadow: none; }
+.ptlog-stat-card { border-radius: 16px; box-shadow: var(--shadow); }
+.ptlog-header h1 { letter-spacing: -0.02em; }
+.ptlog-setcard { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; margin: 0 -14px; padding: 12px 14px; }
+.ptlog-setcard.done { background: color-mix(in srgb, var(--good) 11%, transparent); border-top-color: var(--border); }
+.ptlog-setcard-top strong { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.ptlog-stepper button { border-radius: 50%; width: 40px; height: 40px; margin: 0 auto; background: var(--surface2); border: 0; color: var(--muted); }
+.ptlog-stepper { grid-template-columns: 40px minmax(0,1fr) 40px; }
+.ptlog-stepper input, .ptlog-reps-input { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; border: 0; background: transparent; }
+.ptlog-reps-input { background: var(--surface2); border-radius: 12px; }
+.ptlog-check-big { border-radius: 14px; background: var(--surface); }
+.ptlog-rest-dock { background: var(--dock); color: var(--dock-tx); border: 0; border-radius: 20px; box-shadow: 0 12px 28px rgba(30,34,39,0.25); }
+.ptlog-rest-dock-time { color: inherit; }
+.ptlog-rest-dock-bar { background: rgba(255,255,255,0.10); }
+.ptlog-rest-dock .ptlog-btn { background: rgba(255,255,255,0.14); color: inherit; border: 0; border-radius: 999px; }
+.ptlog-rest-dock.over { background: var(--good); color: var(--on-accent); }
+.ptlog-rest-dock.over .ptlog-rest-dock-bar { background: transparent; }
+.ptlog-chip { white-space: nowrap; }
+.ptlog-theme-btn { font-family: 'Inter', sans-serif; font-size: 11px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 6px 10px; border-radius: 999px; cursor: pointer; }
 `;
