@@ -7,3 +7,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
+
+// App-Hülle zwischenspeichern: Wiederholte Starts erscheinen sofort, auch wenn der Server noch aufwacht.
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
+}

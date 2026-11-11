@@ -11,7 +11,8 @@
     <title>Coaching-Logbuch</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="splash" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-family:system-ui,sans-serif;color:#6b6558;background:#F5F2EC"><div style="font-size:40px">🏋️</div><div style="font-weight:600;letter-spacing:.02em">Coaching-Logbuch</div><div id="splash-hint" style="font-size:13px;opacity:0;transition:opacity .4s">Server wird gestartet – das kann beim ersten Aufruf bis zu einer Minute dauern …</div></div></div>
+    <script>setTimeout(function(){var h=document.getElementById("splash-hint");if(h)h.style.opacity=1},4000)</script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

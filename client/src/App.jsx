@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
+import { catalogFor, MUSCLE_DE } from "./exerciseCatalog.js";
 import { WORKOUT_TEMPLATES, templateFamily, FAMILY_ORDER, templateExerciseSpec } from "./templates.js";
 import {
   LineChart,
@@ -232,16 +233,48 @@ function round(n, d = 0) {
    shared=false -> geräte-lokale Einstellungen (Rolle, Auswahl), liegen im Browser (localStorage) */
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
+// Alle Lese-Anfragen im selben Moment werden zu EINER Server-Anfrage gebündelt (viel schnellerer Start).
+// Fällt das Bündeln aus (z. B. älterer Server), wird auf Einzelabfragen zurückgegriffen.
+let batchQueue = [];
+let batchTimer = null;
+async function fetchSingle(fullKey) {
+  const res = await fetch(`${API_BASE}/storage/${encodeURIComponent(fullKey)}`);
+  if (!res.ok) throw new Error("read_failed");
+  const data = await res.json();
+  return data.value ?? null;
+}
+async function flushBatch() {
+  const queue = batchQueue; batchQueue = []; batchTimer = null;
+  const keys = [...new Set(queue.map((q) => q.fullKey))];
+  let values = null;
+  if (keys.length > 1) {
+    try {
+      const res = await fetch(`${API_BASE}/storage-batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys }) });
+      if (res.ok) values = (await res.json()).values || null;
+    } catch (e) { values = null; }
+  }
+  queue.forEach(async (q) => {
+    try {
+      const raw = values && q.fullKey in values ? values[q.fullKey] : await fetchSingle(q.fullKey);
+      q.resolve(raw ?? null);
+    } catch (e) { q.reject(e); }
+  });
+}
+function readShared(fullKey) {
+  return new Promise((resolve, reject) => {
+    batchQueue.push({ fullKey, resolve, reject });
+    if (!batchTimer) batchTimer = setTimeout(flushBatch, 0);
+  });
+}
+
 async function loadKey(key, shared = true) {
   try {
     if (!shared) {
       const raw = localStorage.getItem(STORAGE_PREFIX + key);
       return raw ? JSON.parse(raw) : null;
     }
-    const res = await fetch(`${API_BASE}/storage/${encodeURIComponent(STORAGE_PREFIX + key)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.value ? JSON.parse(data.value) : null;
+    const raw = await readShared(STORAGE_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
   }
@@ -251,10 +284,8 @@ async function loadKey(key, shared = true) {
 // ein Fehlschlag darf dort NIEMALS als "leer" interpretiert und überschrieben werden.
 async function loadKeyChecked(key) {
   try {
-    const res = await fetch(`${API_BASE}/storage/${encodeURIComponent(STORAGE_PREFIX + key)}`);
-    if (!res.ok) return { ok: false, value: null };
-    const data = await res.json();
-    return { ok: true, value: data.value ? JSON.parse(data.value) : null };
+    const raw = await readShared(STORAGE_PREFIX + key);
+    return { ok: true, value: raw ? JSON.parse(raw) : null };
   } catch (e) {
     return { ok: false, value: null };
   }
@@ -784,6 +815,7 @@ export default function CoachingLogbuch() {
   const [tab, setTab] = useState("overview");
   const [role, setRole] = useState(null);
   const [theme, setTheme] = useState("light");
+  const [infoEx, setInfoEx] = useState(null);
   useEffect(() => { loadKey("theme", false).then((t) => { if (t === "dark" || t === "light") setTheme(t); }); }, []);
   useEffect(() => {
     document.body.style.background = theme === "dark" ? "#0A1016" : "#E9E5DC";
@@ -794,7 +826,10 @@ export default function CoachingLogbuch() {
   const [coaches, setCoaches] = useState([]);
   const [selectedCoachId, setSelectedCoachId] = useState(null);
   const [coachees, setCoachees] = useState([]);
-  const [selectedCoacheeId, setSelectedCoacheeId] = useState(null);
+  // Die gemerkte Auswahl liegt lokal im Browser -> Coachee-Daten sofort mitladen, ohne auf die globalen Daten zu warten.
+  const [selectedCoacheeId, setSelectedCoacheeId] = useState(() => {
+    try { const raw = localStorage.getItem(STORAGE_PREFIX + "selected-coachee"); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+  });
   const [profile, setProfile] = useState(null);
   const [nutrition, setNutrition] = useState([]);
   const [weights, setWeights] = useState([]);
@@ -996,8 +1031,10 @@ export default function CoachingLogbuch() {
   }
 
   return (
+    <InfoCtx.Provider value={setInfoEx}>
     <div className="ptlog-root" data-theme={theme}>
       <style>{CSS}</style>
+      {infoEx && <ExerciseInfoModal exercise={infoEx} onClose={() => setInfoEx(null)} />}
 
       <header className="ptlog-header">
         {profile ? (
@@ -1068,6 +1105,7 @@ export default function CoachingLogbuch() {
 
       {toast && <div className="ptlog-toast"><Check size={14} /> {toast}</div>}
     </div>
+    </InfoCtx.Provider>
   );
 }
 
@@ -2453,9 +2491,9 @@ function ExerciseLibraryManager({ exercises, setExercises }) {
           <div className="ptlog-exercise-grid">
             {filtered.map((ex) => (
               <div key={ex.id} className="ptlog-exercise-card" onClick={() => startEdit(ex)}>
-                <div className="ptlog-exercise-thumb">{ex.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={20} />}</div>
+                <div className="ptlog-exercise-thumb">{exThumb(ex) ? <img src={exThumb(ex)} alt="" loading="lazy" /> : <Dumbbell size={20} />}</div>
                 <div className="ptlog-exercise-info">
-                  <strong>{ex.name}</strong>
+                  <strong>{ex.name} <InfoBtn exercise={ex} /></strong>
                   <span className="ptlog-muted">{ex.category || "—"}</span>
                   {ex.baseline && <span className="ptlog-tag-mini">Ist-Stand erfasst</span>}
                 </div>
@@ -3085,9 +3123,9 @@ function DayContentPreview({ day, exercises, onExerciseClick }) {
               const ex = exercises.find((e) => e.id === item.exerciseId);
               return (
                 <div key={item.id} className="ptlog-exercise-row" onClick={() => onExerciseClick && onExerciseClick(item.exerciseId)} style={{ cursor: onExerciseClick ? "pointer" : "default" }}>
-                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                  <div className="ptlog-exercise-thumb small">{exThumb(ex) ? <img src={exThumb(ex)} alt="" loading="lazy" /> : <Dumbbell size={16} />}</div>
                   <div className="ptlog-exercise-info">
-                    <strong>{ex ? ex.name : "?"}</strong>
+                    <strong>{ex ? ex.name : "?"} {ex && <InfoBtn exercise={ex} />}</strong>
                     <span className="ptlog-muted">{summarizeItemTarget(item)}{rirLabel(item) ? ` · ${rirLabel(item)}` : ""}</span>
                     {item.note && <span className="ptlog-coach-note">📝 {item.note}</span>}
                   </div>
@@ -3300,7 +3338,7 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
                   <div className="ptlog-day-card-body">
                     {t.rows.map((r, i) => (
                       <div key={i} className="ptlog-row-between" style={{ fontSize: 13, padding: "3px 0", gap: 8 }}>
-                        <span>{templateExerciseSpec(r).name}</span>
+                        <span>{templateExerciseSpec(r).name} <InfoBtn name={templateExerciseSpec(r).seedName || templateExerciseSpec(r).name} /></span>
                         <span className="ptlog-muted" style={{ whiteSpace: "nowrap" }}>{r.sets}× {r.reps} · RiR {r.rir}</span>
                       </div>
                     ))}
@@ -3578,8 +3616,9 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
             return (
               <>
                 <div className="ptlog-exercise-row" style={{ padding: 0, marginBottom: 8, cursor: "pointer" }} onClick={() => setModalExerciseId(entry.exerciseId)}>
-                  <div className="ptlog-exercise-thumb small">{ex?.images?.[0] ? <img src={ex.images[0].src} alt="" /> : <Dumbbell size={16} />}</div>
+                  <div className="ptlog-exercise-thumb small">{exThumb(ex) ? <img src={exThumb(ex)} alt="" loading="lazy" /> : <Dumbbell size={16} />}</div>
                   <strong>{ex ? ex.name : "?"}</strong>
+                  {ex && <InfoBtn exercise={ex} />}
                   {withLetter && <span className="ptlog-letter-badge">{entry.groupLetter}</span>}
                   {entry.rir ? <span className="ptlog-tag-mini">RiR {entry.rir}</span> : null}
                 </div>
@@ -3836,8 +3875,135 @@ function SessionHistoryList({ sessions, exercises, limit, editable, setSessions 
   );
 }
 
+/* ---------- Übungsanleitung: Bilder, Muskelkarte, "i"-Button ---------- */
+const InfoCtx = React.createContext(() => {});
+const exThumb = (ex) => (ex && ex.images && ex.images[0] && ex.images[0].src) || (ex && (catalogFor(ex.name) || {}).images && catalogFor(ex.name).images[0]) || null;
+
+function InfoBtn({ exercise, name }) {
+  const open = useContext(InfoCtx);
+  const ex = exercise || (name ? { id: "info-" + name, name } : null);
+  if (!ex) return null;
+  return (
+    <button type="button" className="ptlog-info-btn" aria-label={`Anleitung zu ${ex.name}`} title="Anleitung & Ausführung"
+      onClick={(e) => { e.stopPropagation(); open(ex); }}>i</button>
+  );
+}
+
+/* Muskelkarte: Vorder- und Rückansicht, Hauptmuskeln kräftig, unterstützende Muskeln hell eingefärbt */
+const MM_FRONT = {
+  shoulders: [["e", 33, 47, 9, 10], ["e", 77, 47, 9, 10]],
+  chest: [["e", 45, 60, 11, 9, -6], ["e", 65, 60, 11, 9, 6]],
+  biceps: [["e", 27, 70, 5.5, 12, 8], ["e", 83, 70, 5.5, 12, -8]],
+  forearms: [["e", 22, 97, 5, 14, 6], ["e", 88, 97, 5, 14, -6]],
+  abdominals: [["e", 55, 90, 8, 19]],
+  abductors: [["e", 35, 120, 4.5, 10], ["e", 75, 120, 4.5, 10]],
+  adductors: [["e", 51, 133, 3.5, 18], ["e", 59, 133, 3.5, 18]],
+  quadriceps: [["e", 43, 143, 9, 27, 4], ["e", 67, 143, 9, 27, -4]],
+  calves: [["e", 42, 198, 5.5, 19], ["e", 68, 198, 5.5, 19]],
+  neck: [["e", 55, 31, 5.5, 5]],
+};
+const MM_BACK = {
+  traps: [["p", "M55 33 L73 45 L55 72 L37 45 Z"]],
+  shoulders: [["e", 33, 47, 9, 10], ["e", 77, 47, 9, 10]],
+  "middle back": [["e", 55, 72, 7, 9]],
+  lats: [["e", 43, 80, 8, 16, -14], ["e", 67, 80, 8, 16, 14]],
+  "lower back": [["e", 55, 100, 10, 8]],
+  triceps: [["e", 27, 70, 5.5, 12, 8], ["e", 83, 70, 5.5, 12, -8]],
+  forearms: [["e", 22, 97, 5, 14, 6], ["e", 88, 97, 5, 14, -6]],
+  glutes: [["e", 45, 121, 10, 10], ["e", 65, 121, 10, 10]],
+  abductors: [["e", 34, 121, 4, 9], ["e", 76, 121, 4, 9]],
+  hamstrings: [["e", 44, 155, 9.5, 24, 3], ["e", 66, 155, 9.5, 24, -3]],
+  calves: [["e", 43, 198, 6.5, 19], ["e", 67, 198, 6.5, 19]],
+};
+function MuscleMap({ primary = [], secondary = [] }) {
+  const shape = (sh, i, fill, op) => sh[0] === "e"
+    ? <ellipse key={i} cx={sh[1]} cy={sh[2]} rx={sh[3]} ry={sh[4]} transform={sh[5] ? `rotate(${sh[5]} ${sh[1]} ${sh[2]})` : undefined} fill={fill} opacity={op} />
+    : <path key={i} d={sh[1]} fill={fill} opacity={op} />;
+  const body = (map, off) => (
+    <g transform={`translate(${off} 0)`}>
+      <circle cx="55" cy="15" r="11" fill="var(--muted)" opacity="0.30" />
+      <path d="M33 40 Q55 32 77 40 L73 72 L68 112 L42 112 L37 72 Z" fill="var(--muted)" opacity="0.30" />
+      <ellipse cx="27" cy="68" rx="6" ry="14" fill="var(--muted)" opacity="0.30" transform="rotate(8 27 68)" />
+      <ellipse cx="83" cy="68" rx="6" ry="14" fill="var(--muted)" opacity="0.30" transform="rotate(-8 83 68)" />
+      <ellipse cx="22" cy="97" rx="5" ry="14" fill="var(--muted)" opacity="0.30" transform="rotate(6 22 97)" />
+      <ellipse cx="88" cy="97" rx="5" ry="14" fill="var(--muted)" opacity="0.30" transform="rotate(-6 88 97)" />
+      <ellipse cx="44" cy="143" rx="10" ry="28" fill="var(--muted)" opacity="0.30" />
+      <ellipse cx="66" cy="143" rx="10" ry="28" fill="var(--muted)" opacity="0.30" />
+      <ellipse cx="42" cy="198" rx="6.5" ry="20" fill="var(--muted)" opacity="0.30" />
+      <ellipse cx="68" cy="198" rx="6.5" ry="20" fill="var(--muted)" opacity="0.30" />
+      {Object.entries(map).map(([m, shapes]) => {
+        const isP = primary.includes(m); const isS = !isP && secondary.includes(m);
+        return <g key={m}>{shapes.map((sh, i) => shape(sh, i, isP || isS ? "var(--accent)" : "var(--surface)", isP ? 1 : isS ? 0.5 : 0.5))}</g>;
+      })}
+    </g>
+  );
+  return (
+    <svg className="ptlog-musclemap" viewBox="0 0 220 226" role="img" aria-label="Beanspruchte Muskeln">
+      {body(MM_FRONT, 0)}{body(MM_BACK, 110)}
+      <text x="55" y="224" textAnchor="middle" fontSize="9" fill="var(--muted)">Vorne</text>
+      <text x="165" y="224" textAnchor="middle" fontSize="9" fill="var(--muted)">Hinten</text>
+    </svg>
+  );
+}
+
+function ExerciseGuide({ exercise }) {
+  const cat = catalogFor(exercise.name);
+  const userImgs = exercise.images || [];
+  return (
+    <div className="ptlog-guide">
+      {cat && cat.images && (
+        <div className="ptlog-guide-images">
+          {["Start", "Ende"].map((lbl, i) => (
+            <figure key={lbl}>
+              <img src={cat.images[i]} alt={`${exercise.name} – ${lbl}position`} loading="lazy" onError={(e) => { e.currentTarget.parentNode.style.display = "none"; }} />
+              <figcaption>{i === 0 ? "Ausgangsposition" : "Endposition"}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      {cat && (cat.p.length > 0 || cat.s.length > 0) && (
+        <div className="ptlog-guide-muscles">
+          <MuscleMap primary={cat.p} secondary={cat.s} />
+          <div>
+            {cat.p.length > 0 && (<><h4>Hauptmuskeln</h4><div className="ptlog-tag-picker">{cat.p.map((m) => <span key={m} className="ptlog-tag-static strong">{MUSCLE_DE[m] || m}</span>)}</div></>)}
+            {cat.s.length > 0 && (<><h4>Unterstützend</h4><div className="ptlog-tag-picker">{cat.s.map((m) => <span key={m} className="ptlog-tag-static">{MUSCLE_DE[m] || m}</span>)}</div></>)}
+          </div>
+        </div>
+      )}
+      {cat ? (
+        <>
+          <h4>Ausgangsposition</h4><p className="ptlog-goal-text">{cat.setup}</p>
+          <h4>Ausführung</h4><p className="ptlog-goal-text">{cat.move}</p>
+          <h4>Hinweise</h4>
+          <ul className="ptlog-guide-tips">{cat.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
+        </>
+      ) : (
+        <p className="ptlog-muted">Für diese Übung gibt es noch keine Standardanleitung. Dein Coach kann unten eine eigene Anleitung und Bilder hinterlegen.</p>
+      )}
+      {exercise.instructions && (<><h4>Notiz des Coaches</h4><p className="ptlog-goal-text">{exercise.instructions}</p></>)}
+      {userImgs.length > 0 && (<div className="ptlog-guide-images" style={{ marginTop: 10 }}>{userImgs.map((im) => (<figure key={im.id}><img src={im.src} alt="" loading="lazy" /></figure>))}</div>)}
+      {cat && cat.images && <p className="ptlog-muted" style={{ fontSize: 10, marginTop: 12 }}>Bilder: free-exercise-db (gemeinfrei). Die Bilder zeigen eine typische Ausführung, Geräte können abweichen.</p>}
+    </div>
+  );
+}
+
+function ExerciseInfoModal({ exercise, onClose }) {
+  if (!exercise) return null;
+  return (
+    <div className="ptlog-modal-overlay" onClick={onClose}>
+      <div className="ptlog-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ptlog-modal-header">
+          <h2 style={{ margin: 0, fontSize: 18 }}>{exercise.name}</h2>
+          <button className="ptlog-btn-x" onClick={onClose} aria-label="Schließen"><X size={18} /></button>
+        </div>
+        <ExerciseGuide exercise={exercise} />
+      </div>
+    </div>
+  );
+}
+
 function ExerciseDetailModal({ exercise, sessions, clientNote, onNoteChange, onClose }) {
-  const [tab, setTab] = useState("details");
+  const [tab, setTab] = useState("guide");
   const [imgIndex, setImgIndex] = useState(0);
   if (!exercise) return null;
 
@@ -3857,12 +4023,15 @@ function ExerciseDetailModal({ exercise, sessions, clientNote, onNoteChange, onC
       <div className="ptlog-modal" onClick={(e) => e.stopPropagation()}>
         <div className="ptlog-modal-header">
           <div className="ptlog-mode-tabs">
-            <button className={"ptlog-mode-btn" + (tab === "details" ? " active" : "")} onClick={() => setTab("details")}>Trainingsdetails</button>
+            <button className={"ptlog-mode-btn" + (tab === "guide" ? " active" : "")} onClick={() => setTab("guide")}>Anleitung</button>
+            <button className={"ptlog-mode-btn" + (tab === "details" ? " active" : "")} onClick={() => setTab("details")}>Notizen</button>
             <button className={"ptlog-mode-btn" + (tab === "history" ? " active" : "")} onClick={() => setTab("history")}>Verlauf</button>
           </div>
           <button className="ptlog-btn-x" onClick={onClose}><X size={18} /></button>
         </div>
         <h2 style={{ marginTop: 10 }}>{exercise.name}</h2>
+
+        {tab === "guide" && <ExerciseGuide exercise={{ ...exercise, instructions: "", images: [] }} />}
 
         {tab === "details" && (
           <div>
@@ -4329,4 +4498,22 @@ const CSS = `
 .ptlog-rest-dock.over .ptlog-rest-dock-bar { background: transparent; }
 .ptlog-chip { white-space: nowrap; }
 .ptlog-theme-btn { font-family: 'Inter', sans-serif; font-size: 11px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 6px 10px; border-radius: 999px; cursor: pointer; }
+
+/* ---------- Übungsanleitung ---------- */
+.ptlog-info-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--accent); color: var(--accent); background: transparent; font: italic 700 12px Georgia, serif; line-height: 1; padding: 0; margin-left: 6px; cursor: pointer; vertical-align: middle; flex-shrink: 0; }
+.ptlog-info-btn:hover { background: var(--accent); color: var(--on-accent); }
+.ptlog-guide h4 { font-size: 12px; margin: 14px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.ptlog-guide-images { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ptlog-guide-images figure { margin: 0; border-radius: 12px; overflow: hidden; background: var(--surface2); }
+.ptlog-guide-images img { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; }
+.ptlog-guide-images figcaption { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; }
+.ptlog-guide-muscles { display: flex; gap: 14px; align-items: center; margin-top: 12px; }
+.ptlog-guide-muscles > div:last-child { flex: 1; min-width: 0; }
+.ptlog-guide-muscles h4 { margin-top: 0; }
+.ptlog-musclemap { width: 170px; flex-shrink: 0; }
+.ptlog-tag-mini { white-space: nowrap; }
+.ptlog-tag-static.strong { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.ptlog-guide-tips { margin: 0; padding-left: 18px; font-size: 14px; }
+.ptlog-guide-tips li { margin-bottom: 4px; }
+.ptlog-modal-header h2 { font-family: 'Sora', sans-serif; }
 `;

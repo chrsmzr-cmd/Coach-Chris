@@ -1,10 +1,12 @@
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const compression = require("compression");
 const { Pool } = require("pg");
 const webpush = require("web-push");
 
 const app = express();
+app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: "8mb" })); // großzügig, wegen evtl. Bild-Uploads als Data-URL
 
@@ -34,6 +36,22 @@ async function ensureSchema() {
 }
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+// Mehrere Schlüssel in EINER Anfrage (spart beim Start viele Roundtrips)
+app.post("/api/storage-batch", async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body && req.body.keys) ? req.body.keys.filter((k) => typeof k === "string").slice(0, 60) : [];
+    if (keys.length === 0) return res.json({ values: {} });
+    const r = await pool.query("SELECT key, value FROM storage WHERE key = ANY($1::text[])", [keys]);
+    const values = {};
+    keys.forEach((k) => { values[k] = null; });
+    r.rows.forEach((row) => { values[row.key] = row.value; });
+    res.json({ values });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "read_failed" });
+  }
+});
 
 app.get("/api/storage/:key", async (req, res) => {
   try {
@@ -90,16 +108,23 @@ app.post("/api/push/notify", async (req, res) => {
 
 // Gebautes Frontend mit ausliefern (ein einziger Render-Service für alles)
 const clientDist = path.join(__dirname, "..", "client", "dist");
-app.use(express.static(clientDist));
+// Gehashte Assets (JS/CSS) und Übungsfotos dürfen lange gecacht werden, index.html nie.
+app.use(express.static(clientDist, {
+  setHeaders(res, filePath) {
+    if (/[\\/]assets[\\/]/.test(filePath)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    else if (/[\\/]ex[\\/]/.test(filePath)) res.setHeader("Cache-Control", "public, max-age=2592000");
+    else if (/index\.html$|sw\.js$/.test(filePath)) res.setHeader("Cache-Control", "no-cache");
+  },
+}));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
 const PORT = process.env.PORT || 3001;
-ensureSchema()
-  .then(() => app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`)))
-  .catch((e) => {
-    console.error("Schema-Initialisierung fehlgeschlagen:", e);
-    process.exit(1);
-  });
+// Sofort lauschen (schnellerer Kaltstart); das Schema wird parallel angelegt.
+app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
+ensureSchema().catch((e) => {
+  console.error("Schema-Initialisierung fehlgeschlagen:", e);
+  process.exit(1);
+});
