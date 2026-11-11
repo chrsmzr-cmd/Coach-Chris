@@ -1,4 +1,4 @@
-const CACHE = "ptlog-shell-v1";
+const CACHE = "ptlog-shell-v3";
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(
   caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())
@@ -16,14 +16,20 @@ self.addEventListener("fetch", (event) => {
       const hit = await c.match(req);
       if (hit) return hit;
       const res = await fetch(req);
-      if (res.ok) c.put(req, res.clone());
+      // nur echte Bilder/Skripte/Styles zwischenspeichern, nie eine HTML-Ersatzseite
+      const ct = res.headers.get("content-type") || "";
+      if (res.ok && /^(image\/|text\/css|(application|text)\/javascript)/.test(ct)) c.put(req, res.clone());
       return res;
     }));
     return;
   }
   if (req.mode === "navigate") {
     event.respondWith(caches.open(CACHE).then(async (c) => {
-      const network = fetch(req).then((res) => { if (res.ok) c.put("/", res.clone()); return res; });
+      const network = fetch(req).then((res) => {
+        // nur echte HTML-Seiten als App-Hülle merken (nie ein Foto o. Ä., das direkt aufgerufen wurde)
+        if (res.ok && (res.headers.get("content-type") || "").includes("text/html")) c.put("/", res.clone());
+        return res;
+      });
       const cached = await c.match("/");
       if (!cached) return network;
       const timeout = new Promise((resolve) => setTimeout(() => resolve(cached), 2500));
