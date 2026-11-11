@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
@@ -108,6 +109,19 @@ app.post("/api/push/notify", async (req, res) => {
 
 // Gebautes Frontend mit ausliefern (ein einziger Render-Service für alles)
 const clientDist = path.join(__dirname, "..", "client", "dist");
+// Übungsfotos: zuerst im gebauten Frontend (client/public/ex), sonst direkt im Repo-Hauptverzeichnis
+// (falls die Fotoordner dort hochgeladen wurden). Nur Ordner-/Dateinamen aus erlaubten Zeichen.
+const repoRoot = path.join(__dirname, "..");
+app.get("/ex/:id/:file", (req, res) => {
+  const { id, file } = req.params;
+  if (!/^[A-Za-z0-9_\-.]+$/.test(id) || id.startsWith(".") || !/^[01]\.webp$/.test(file)) return res.status(404).end();
+  const candidates = [path.join(clientDist, "ex", id, file), path.join(repoRoot, id, file)];
+  const hit = candidates.find((f) => fs.existsSync(f));
+  if (!hit) return res.status(404).end();
+  res.setHeader("Cache-Control", "public, max-age=2592000");
+  res.sendFile(hit);
+});
+
 // Gehashte Assets (JS/CSS) und Übungsfotos dürfen lange gecacht werden, index.html nie.
 app.use(express.static(clientDist, {
   setHeaders(res, filePath) {
@@ -118,6 +132,8 @@ app.use(express.static(clientDist, {
 }));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
+  // Fehlende Dateien (Fotos, Assets) sollen 404 liefern statt der Startseite
+  if (/^\/(ex|assets)\//.test(req.path) || /\.(webp|png|jpe?g|js|css|map)$/.test(req.path)) return res.status(404).end();
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
