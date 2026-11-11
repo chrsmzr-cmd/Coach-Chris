@@ -816,6 +816,8 @@ export default function CoachingLogbuch() {
   const [role, setRole] = useState(null);
   const [theme, setTheme] = useState("light");
   const [infoEx, setInfoEx] = useState(null);
+  const [guideOverrides, setGuideOverrides] = useState({});
+  const guidesLoaded = useRef(false);
   useEffect(() => { loadKey("theme", false).then((t) => { if (t === "dark" || t === "light") setTheme(t); }); }, []);
   useEffect(() => {
     document.body.style.background = theme === "dark" ? "#0A1016" : "#E9E5DC";
@@ -846,10 +848,13 @@ export default function CoachingLogbuch() {
 
   useEffect(() => {
     (async () => {
-      const [co, c, exResult, cf, r, sc, ssc, pa] = await Promise.all([
+      const [co, c, exResult, cf, r, sc, ssc, pa, gdRes] = await Promise.all([
         loadKey("coaches"), loadKey("coachees"), loadKeyChecked("exercises"), loadKey("customfoods"),
         loadKey("role", false), loadKey("selected-coachee", false), loadKey("selected-coach", false), loadKey("privacy-ack", false),
+        loadKeyChecked("guide-overrides"),
       ]);
+      // Eigene Anleitungstexte des Coaches (überschreiben die Standardtexte pro Übungsname)
+      if (gdRes.ok) { guidesLoaded.current = true; setGuideOverrides(gdRes.value || {}); }
       setCoaches(co || []);
       setCoachees(c || []);
       // Nur bei erfolgreichem Laden ergänzen + zurückschreiben. Bei einem Lade-Fehler (Netzwerk/Server)
@@ -929,6 +934,16 @@ export default function CoachingLogbuch() {
   const updateCheckins = useCallback(async (next) => { setCheckinsState(next); await saveKey(`checkins-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const updateCustomFoods = useCallback(async (next) => { setCustomFoods(next); await saveKey("customfoods", next); }, []);
   const updateExercises = useCallback(async (next) => { setExercisesState(next); await saveKey("exercises", next); }, []);
+  // Anleitung einer Übung speichern (data = null -> eigene Fassung entfernen, Standardtext gilt wieder)
+  const saveGuide = async (name, data) => {
+    if (!guidesLoaded.current) { flash("Anleitungen konnten nicht geladen werden – bitte Seite neu laden."); return false; }
+    const next = { ...guideOverrides };
+    if (data) next[guideKey(name)] = data; else delete next[guideKey(name)];
+    setGuideOverrides(next);
+    const ok = await saveKey("guide-overrides", next);
+    flash(ok ? (data ? "Anleitung gespeichert" : "Standardtext wiederhergestellt") : "Speichern fehlgeschlagen");
+    return ok;
+  };
   const updatePlans = useCallback(async (next) => { setPlansState(next); await saveKey(`plans-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const updateSessions = useCallback(async (next) => { setSessionsState(next); await saveKey(`sessions-${selectedCoacheeId}`, next); }, [selectedCoacheeId]);
   const recordPlanActivation = useCallback(async (planId, date) => {
@@ -1032,6 +1047,7 @@ export default function CoachingLogbuch() {
 
   return (
     <InfoCtx.Provider value={setInfoEx}>
+    <GuideCtx.Provider value={{ overrides: guideOverrides, canEdit: role === "coach", save: saveGuide }}>
     <div className="ptlog-root" data-theme={theme}>
       <style>{CSS}</style>
       {infoEx && <ExerciseInfoModal exercise={infoEx} onClose={() => setInfoEx(null)} />}
@@ -1105,6 +1121,7 @@ export default function CoachingLogbuch() {
 
       {toast && <div className="ptlog-toast"><Check size={14} /> {toast}</div>}
     </div>
+    </GuideCtx.Provider>
     </InfoCtx.Provider>
   );
 }
@@ -3877,6 +3894,17 @@ function SessionHistoryList({ sessions, exercises, limit, editable, setSessions 
 
 /* ---------- Übungsanleitung: Bilder, Muskelkarte, "i"-Button ---------- */
 const InfoCtx = React.createContext(() => {});
+const GuideCtx = React.createContext({ overrides: {}, canEdit: false, save: async () => false });
+const guideKey = (n) => String(n || "").toLowerCase().trim().replace(/\s+/g, " ");
+const ALL_MUSCLES = Object.keys(MUSCLE_DE);
+// Standardanleitung + ggf. eigene Fassung des Coaches zusammenführen
+function resolveGuide(name, overrides) {
+  const base = catalogFor(name);
+  const ov = (overrides || {})[guideKey(name)];
+  if (!base && !ov) return { cat: null, custom: false };
+  const cat = { images: null, p: [], s: [], setup: "", move: "", tips: [], ...(base || {}), ...(ov || {}) };
+  return { cat, custom: !!ov };
+}
 const exThumb = (ex) => (ex && ex.images && ex.images[0] && ex.images[0].src) || (ex && (catalogFor(ex.name) || {}).images && catalogFor(ex.name).images[0]) || null;
 
 function InfoBtn({ exercise, name }) {
@@ -3946,9 +3974,63 @@ function MuscleMap({ primary = [], secondary = [] }) {
   );
 }
 
+function GuideEditor({ exercise, cat, custom, onClose }) {
+  const { save } = useContext(GuideCtx);
+  const [setup, setSetup] = useState(cat ? cat.setup : "");
+  const [move, setMove] = useState(cat ? cat.move : "");
+  const [tips, setTips] = useState(cat ? cat.tips.join("\n") : "");
+  const [prim, setPrim] = useState(cat ? cat.p : []);
+  const [sec, setSec] = useState(cat ? cat.s : []);
+  const [busy, setBusy] = useState(false);
+  // Muskel durchschalten: aus -> Haupt -> unterstützend -> aus
+  const cycle = (m) => {
+    if (prim.includes(m)) { setPrim(prim.filter((x) => x !== m)); setSec([...sec, m]); }
+    else if (sec.includes(m)) setSec(sec.filter((x) => x !== m));
+    else setPrim([...prim, m]);
+  };
+  const submit = async () => {
+    setBusy(true);
+    const ok = await save(exercise.name, { setup: setup.trim(), move: move.trim(), tips: tips.split("\n").map((t) => t.trim()).filter(Boolean), p: prim, s: sec });
+    setBusy(false);
+    if (ok) onClose();
+  };
+  const reset = async () => {
+    if (!window.confirm("Eigene Fassung verwerfen und den Standardtext wiederherstellen?")) return;
+    setBusy(true);
+    const ok = await save(exercise.name, null);
+    setBusy(false);
+    if (ok) onClose();
+  };
+  return (
+    <div className="ptlog-guide-editor">
+      <h4>Muskeln <span className="ptlog-muted" style={{ fontWeight: 400, textTransform: "none" }}>(antippen: Haupt → unterstützend → aus)</span></h4>
+      <div className="ptlog-tag-picker">
+        {ALL_MUSCLES.map((m) => (
+          <button type="button" key={m} className={"ptlog-tag-btn" + (prim.includes(m) ? " active" : sec.includes(m) ? " half" : "")} onClick={() => cycle(m)}>{MUSCLE_DE[m]}</button>
+        ))}
+      </div>
+      <h4>Ausgangsposition</h4>
+      <textarea rows={4} value={setup} onChange={(e) => setSetup(e.target.value)} />
+      <h4>Ausführung</h4>
+      <textarea rows={5} value={move} onChange={(e) => setMove(e.target.value)} />
+      <h4>Hinweise <span className="ptlog-muted" style={{ fontWeight: 400, textTransform: "none" }}>(ein Hinweis pro Zeile)</span></h4>
+      <textarea rows={5} value={tips} onChange={(e) => setTips(e.target.value)} />
+      <div className="ptlog-guide-editor-actions">
+        <button className="ptlog-btn primary" onClick={submit} disabled={busy}>Speichern</button>
+        <button className="ptlog-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+        {custom && <button className="ptlog-btn" onClick={reset} disabled={busy}>Standardtext wiederherstellen</button>}
+      </div>
+      <p className="ptlog-muted" style={{ fontSize: 11 }}>Gilt für alle Coachees und wird unter dem Übungsnamen „{exercise.name}" gespeichert.</p>
+    </div>
+  );
+}
+
 function ExerciseGuide({ exercise }) {
-  const cat = catalogFor(exercise.name);
+  const { overrides, canEdit } = useContext(GuideCtx);
+  const [editing, setEditing] = useState(false);
+  const { cat, custom } = resolveGuide(exercise.name, overrides);
   const userImgs = exercise.images || [];
+  if (editing) return <div className="ptlog-guide"><GuideEditor exercise={exercise} cat={cat} custom={custom} onClose={() => setEditing(false)} /></div>;
   return (
     <div className="ptlog-guide">
       {cat && cat.images && (
@@ -3972,16 +4054,20 @@ function ExerciseGuide({ exercise }) {
       )}
       {cat ? (
         <>
-          <h4>Ausgangsposition</h4><p className="ptlog-goal-text">{cat.setup}</p>
-          <h4>Ausführung</h4><p className="ptlog-goal-text">{cat.move}</p>
-          <h4>Hinweise</h4>
-          <ul className="ptlog-guide-tips">{cat.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
+          {cat.setup && (<><h4>Ausgangsposition</h4><p className="ptlog-goal-text">{cat.setup}</p></>)}
+          {cat.move && (<><h4>Ausführung</h4><p className="ptlog-goal-text">{cat.move}</p></>)}
+          {cat.tips.length > 0 && (<><h4>Hinweise</h4><ul className="ptlog-guide-tips">{cat.tips.map((t, i) => <li key={i}>{t}</li>)}</ul></>)}
         </>
       ) : (
-        <p className="ptlog-muted">Für diese Übung gibt es noch keine Standardanleitung. Dein Coach kann unten eine eigene Anleitung und Bilder hinterlegen.</p>
+        <p className="ptlog-muted">Für diese Übung gibt es noch keine Standardanleitung.{canEdit ? "" : " Dein Coach kann eine hinterlegen."}</p>
       )}
       {exercise.instructions && (<><h4>Notiz des Coaches</h4><p className="ptlog-goal-text">{exercise.instructions}</p></>)}
       {userImgs.length > 0 && (<div className="ptlog-guide-images" style={{ marginTop: 10 }}>{userImgs.map((im) => (<figure key={im.id}><img src={im.src} alt="" loading="lazy" /></figure>))}</div>)}
+      {canEdit && (
+        <button className="ptlog-btn" style={{ marginTop: 12 }} onClick={() => setEditing(true)}>
+          {cat ? "Anleitung bearbeiten" : "Anleitung anlegen"}{custom ? " (angepasst)" : ""}
+        </button>
+      )}
       {cat && cat.images && <p className="ptlog-muted" style={{ fontSize: 10, marginTop: 12 }}>Bilder: free-exercise-db (gemeinfrei). Die Bilder zeigen eine typische Ausführung, Geräte können abweichen.</p>}
     </div>
   );
@@ -4514,6 +4600,9 @@ const CSS = `
 .ptlog-tag-mini { white-space: nowrap; }
 .ptlog-tag-static.strong { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
 .ptlog-guide-tips { margin: 0; padding-left: 18px; font-size: 14px; }
+.ptlog-tag-btn.half { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: var(--accent); }
+.ptlog-guide-editor textarea { min-height: 70px; }
+.ptlog-guide-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .ptlog-guide-tips li { margin-bottom: 4px; }
 .ptlog-modal-header h2 { font-family: 'Sora', sans-serif; }
 `;
