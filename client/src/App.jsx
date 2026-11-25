@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
 import { catalogFor, MUSCLE_DE } from "./exerciseCatalog.js";
+import { PROGRAMS } from "./programs.js";
 import { WORKOUT_TEMPLATES, templateFamily, FAMILY_ORDER, templateExerciseSpec } from "./templates.js";
 import {
   LineChart,
@@ -15,6 +16,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import {
+  BookmarkPlus,
   LayoutDashboard,
   UserPlus,
   Utensils,
@@ -959,7 +961,8 @@ export default function CoachingLogbuch() {
     const today = todayISO();
     const due = plans.filter((p) => p.scheduledActivationDate && p.scheduledActivationDate <= today).sort((a, b) => b.scheduledActivationDate.localeCompare(a.scheduledActivationDate))[0];
     if (!due || due.active) return;
-    const next = plans.map((p) => ({ ...p, active: p.id === due.id, scheduledActivationDate: p.id === due.id ? null : p.scheduledActivationDate }));
+    // Der aktivierte Plan und alle früher fälligen (übersprungenen) Termine werden abgeräumt, sonst würde der Plan wieder zurückspringen.
+    const next = plans.map((p) => ({ ...p, active: p.id === due.id, scheduledActivationDate: (p.id === due.id || (p.scheduledActivationDate && p.scheduledActivationDate <= due.scheduledActivationDate)) ? null : p.scheduledActivationDate }));
     updatePlans(next);
     recordPlanActivation(due.id, due.scheduledActivationDate);
   }, [plans, selectedCoacheeId, updatePlans, recordPlanActivation]);
@@ -2880,6 +2883,13 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
   const [printPlan, setPrintPlan] = useState(null);
   const [previewDay, setPreviewDay] = useState(null);
   const [transferDay, setTransferDay] = useState(null);
+  const [tplMsg, setTplMsg] = useState("");
+  const saveDayTemplate = async (d) => {
+    const plan = plans.find((p) => p.id === editingId);
+    const r = await addCustomTemplates([templateFromDay(d, dayTitle(d, plan ? plan.name : ""), plan ? plan.name : "")]);
+    setTplMsg(!r.ok ? "Vorlage konnte nicht gespeichert werden - bitte erneut versuchen." : r.added ? "Als Vorlage gespeichert ✓ Du findest sie unter Vorlagen → „Meine Vorlagen\"." : "Diese Übungsfolge ist bereits als Vorlage vorhanden.");
+    setTimeout(() => setTplMsg(""), 4000);
+  };
   const [schedulingId, setSchedulingId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(todayISO());
   const [f, setF] = useState({ name: "", days: emptyPlanDays() });
@@ -2945,6 +2955,7 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
       {printPlan && <PrintablePlan plan={printPlan} exercises={exercises} coacheeName={coacheeName} />}
       {previewDay && <DayPreviewModal day={previewDay} exercises={exercises} onClose={() => setPreviewDay(null)} />}
       {transferDay && <DayTransferModal day={transferDay} plans={plans} editingId={editingId} coachees={coachees} coacheeId={coacheeId} setPlans={setPlans} onClose={() => setTransferDay(null)} />}
+      {tplMsg && <p className="ptlog-goal-banner">{tplMsg}</p>}
       {!showForm ? (
         <>
           <div className="ptlog-row-between" style={{ marginBottom: 12 }}><h3 style={{ margin: 0 }}>Trainingspläne</h3><div style={{ display: "flex", gap: 6 }}>{plans.length > 0 && <button className="ptlog-btn" onClick={() => setSuggestOpen(!suggestOpen)}>💡 Vorschlag</button>}<button className="ptlog-btn primary" onClick={startNew}><Plus size={14} /> Plan</button></div></div>
@@ -3023,6 +3034,9 @@ function PlanManager({ plans, setPlans, exercises, setExercises, profile, onActi
                     )}
                     {!d.isRestDay && d.groups.length > 0 && (
                       <button className="ptlog-btn-x" onClick={() => setTransferDay(d)} aria-label="Workout in anderen Plan kopieren" title="In anderen Plan kopieren"><Send size={15} /></button>
+                    )}
+                    {!d.isRestDay && d.groups.length > 0 && !d.isBaseline && (
+                      <button className="ptlog-btn-x" onClick={() => saveDayTemplate(d)} aria-label="Als Vorlage speichern" title="Als Vorlage speichern"><BookmarkPlus size={15} /></button>
                     )}
                     {!d.isRestDay && (
                       <select value="" onChange={(e) => { if (e.target.value !== "") swapDayContent(d.id, Number(e.target.value)); }} title="Auf einen anderen Wochentag verschieben" style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}>
@@ -3129,7 +3143,7 @@ function DayContentPreview({ day, exercises, onExerciseClick }) {
     <>
       {allMuscles.length > 0 && (<div className="ptlog-tag-picker" style={{ marginBottom: 14 }}>{allMuscles.map((m) => (<span key={m} className="ptlog-tag-static">{m}</span>))}</div>)}
       {day.groups.length === 0 ? (
-        <p className="ptlog-muted">Ruhetag — keine Übungen an diesem Tag.</p>
+        <p className="ptlog-muted">{day.isRestDay ? "Ruhetag — keine Übungen an diesem Tag." : (day.note || "Für diesen Tag sind keine Übungen hinterlegt.")}</p>
       ) : (
         day.groups.map((g) => (
           <div key={g.id} className="ptlog-block-card ptlog-block-group">
@@ -3278,15 +3292,91 @@ function resolveTemplateExercises(templates, exercises) {
   return { exercises: list, added, days };
 }
 
+/* ---------- Programme (mehrere Wochenpläne, die sich zeitlich ablösen) ---------- */
+const addDaysISO = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+function buildProgramPlans(program, exercises, startISO) {
+  const list = [...exercises];
+  const norm = (n) => String(n || "").trim().toLowerCase();
+  const byName = new Map(list.map((e) => [norm(e.name), e]));
+  let added = 0;
+  const idFor = (name) => {
+    const hit = byName.get(norm(name));
+    if (hit) return hit.id;
+    const seed = SEED_EXERCISES.find((x) => norm(x.name) === norm(name));
+    const ex = seed ? { ...seed, id: uid() } : { id: uid(), name, category: "Sonstiges", equipment: "", muscles: [], instructions: "", images: [], goalTags: [], baseline: null };
+    list.push(ex); byName.set(norm(name), ex); added += 1;
+    return ex.id;
+  };
+  const plans = program.blocks.map((b) => {
+    const days = emptyPlanDays().map((d) => {
+      const spec = b.days.find((x) => x.weekday === d.weekday);
+      if (!spec) return d;
+      if (spec.rest) return { ...d, isRestDay: true, note: spec.note || "" };
+      return {
+        ...d, isRestDay: false, sessionName: spec.sessionName, note: spec.note || "",
+        groups: spec.groups.map((g) => ({
+          id: uid(), type: g.type, purpose: g.purpose, rounds: g.rounds,
+          items: g.items.map((x) => ({ id: uid(), exerciseId: idFor(x.ex), restSeconds: x.rest, unit: x.unit, note: x.note, rir: x.rir, sets: x.sets.map((st) => ({ reps: st.reps || "", weight: st.weight || "", distance: st.distance || "", unit: x.unit })) })),
+        })),
+      };
+    });
+    return { id: uid(), name: `${program.planPrefix} · ${b.title}`, active: false, scheduledActivationDate: addDaysISO(startISO, (b.weeks[0] - 1) * 7), days };
+  });
+  return { plans, exercises: list, added };
+}
+
+/* ---------- Eigene Vorlagen (aus bestehenden Plänen übernommen) ---------- */
+const daySig = (day) => (day.groups || []).map((g) => g.type + ":" + (g.items || []).map((it) => `${it.exerciseId}x${(it.sets || []).length}@${(it.sets || []).map((st) => st.reps).join(",")}`).join("+")).join("|");
+function templateFromDay(day, title, source) {
+  const c = cloneDayContent(day);
+  // Gewichte gehören zum jeweiligen Coachee -> in der Vorlage leer lassen (Wiederholungen, RiR, Pausen, Notizen bleiben)
+  const groups = c.groups.map((g) => ({ ...g, items: (g.items || []).map((it) => ({ ...it, sets: (it.sets || []).map((st) => ({ ...st, weight: "" })) })) }));
+  return { id: uid(), title, source: source || "", savedAt: todayISO(), day: { sessionName: c.sessionName, note: c.note, groups } };
+}
+async function addCustomTemplates(items) {
+  const res = await loadKeyChecked("custom-templates");
+  if (!res.ok) return { ok: false, added: 0, skipped: 0, list: null };
+  const list = res.value || [];
+  const sigs = new Set(list.map((t) => daySig(t.day)));
+  const next = [...list];
+  let added = 0, skipped = 0;
+  items.forEach((t) => { const sig = daySig(t.day); if (sigs.has(sig)) { skipped += 1; return; } sigs.add(sig); next.push(t); added += 1; });
+  if (added > 0 && !(await saveKey("custom-templates", next))) return { ok: false, added: 0, skipped, list: null };
+  return { ok: true, added, skipped, list: next };
+}
+const dayTitle = (day, planName, coacheeName) => `${day.sessionName || (day.weekday != null ? WEEKDAY_FULL[day.weekday] : "Training")}${planName ? " · " + planName : ""}${coacheeName ? " (" + coacheeName + ")" : ""}`;
+
 function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, coacheeId }) {
   const [open, setOpen] = useState({});
-  const [selected, setSelected] = useState([]);
+  const [selected, setSelected] = useState([]); // Schlüssel: "b:<Titel>" (Standard) oder "c:<id>" (eigene)
   const [planName, setPlanName] = useState("");
   const [transferDay, setTransferDay] = useState(null);
   const [msg, setMsg] = useState("");
+  const [custom, setCustom] = useState(null); // null = lädt, [] = keine
+  const [customFailed, setCustomFailed] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progStart, setProgStart] = useState(PROGRAMS[0].defaultStart);
+  const [progOpen, setProgOpen] = useState(false);
+  const coacheeObj = (coachees || []).find((c) => c.id === coacheeId);
+  const createProgram = (prog) => {
+    if (!ready) return blocked();
+    if (!coacheeId) { setMsg("Bitte zuerst einen Coachee auswählen."); return; }
+    const exists = plans.some((p) => p.name.startsWith(prog.planPrefix + " · Block"));
+    if (exists && !window.confirm("Dieses Programm wurde für diesen Coachee schon angelegt. Nochmals anlegen?")) return;
+    const r = buildProgramPlans(prog, exercises, progStart);
+    if (r.added > 0) setExercises(r.exercises);
+    setPlans([...plans, ...r.plans]);
+    setMsg(`${r.plans.length} Pläne für ${coacheeObj ? coacheeObj.name : "den Coachee"} angelegt. Block 1 aktiviert sich automatisch am ${fmtDate(progStart)}, danach löst jeder Block den nächsten ab. Du findest alle unter „Pläne" und kannst sie dort anpassen.`);
+  };
   const families = FAMILY_ORDER.map((fam) => ({ fam, items: WORKOUT_TEMPLATES.filter((t) => templateFamily(t.title) === fam) })).filter((x) => x.items.length);
   const ready = exercises.length > 0;
   const blocked = () => { setMsg("Die Übungsliste ist noch nicht geladen - bitte kurz warten oder die Seite neu laden."); return true; };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => { const r = await loadKeyChecked("custom-templates"); if (!alive) return; if (r.ok) setCustom(r.value || []); else { setCustom([]); setCustomFailed(true); } })();
+    return () => { alive = false; };
+  }, []);
 
   const copyToPlan = (t) => {
     if (!ready) return blocked();
@@ -3295,23 +3385,64 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
     setMsg("");
     setTransferDay({ weekday: null, isBaseline: false, note: "", sessionName: r.days[0].sessionName, groups: r.days[0].groups });
   };
-  const toggle = (title) => setSelected((prev) => (prev.includes(title) ? prev.filter((x) => x !== title) : prev.length >= 6 ? prev : [...prev, title]));
+  const copyCustomToPlan = (t) => { setMsg(""); setTransferDay({ weekday: null, isBaseline: false, note: t.day.note || "", sessionName: t.day.sessionName, groups: t.day.groups }); };
+  const toggle = (key) => setSelected((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : prev.length >= 6 ? prev : [...prev, key]));
+  const selectedName = (key) => (key.startsWith("b:") ? key.slice(2) : ((custom || []).find((t) => t.id === key.slice(2)) || {}).title || "");
   const createPlan = () => {
     if (!ready) return blocked();
-    const chosen = selected.map((title) => WORKOUT_TEMPLATES.find((t) => t.title === title)).filter(Boolean);
-    if (!chosen.length || !planName.trim()) return;
-    const r = resolveTemplateExercises(chosen, exercises);
+    const keys = selected.filter((k) => k.startsWith("b:") ? WORKOUT_TEMPLATES.some((t) => t.title === k.slice(2)) : (custom || []).some((t) => t.id === k.slice(2)));
+    if (!keys.length || !planName.trim()) return;
+    const chosenB = keys.filter((k) => k.startsWith("b:")).map((k) => WORKOUT_TEMPLATES.find((t) => t.title === k.slice(2)));
+    const r = resolveTemplateExercises(chosenB, exercises);
     if (r.added > 0) setExercises(r.exercises);
-    const wds = TEMPLATE_SPREAD[chosen.length];
+    let bi = 0;
+    const dayList = keys.map((k) => {
+      if (k.startsWith("b:")) return r.days[bi++];
+      const t = custom.find((x) => x.id === k.slice(2));
+      const c = cloneDayContent(t.day);
+      return { sessionName: c.sessionName, groups: c.groups };
+    });
+    const wds = TEMPLATE_SPREAD[keys.length];
     const days = emptyPlanDays().map((d) => {
       const i = wds.indexOf(d.weekday);
-      return i < 0 ? d : { ...d, isRestDay: false, sessionName: r.days[i].sessionName, groups: r.days[i].groups };
+      return i < 0 ? d : { ...d, isRestDay: false, sessionName: dayList[i].sessionName, groups: dayList[i].groups };
     });
     setPlans([...plans, { id: uid(), name: planName.trim(), active: plans.length === 0, days }]);
     setSelected([]); setPlanName("");
-    setMsg(`Plan „${planName.trim()}" angelegt (${chosen.length} Trainingstage) - du findest ihn unter „Pläne" und kannst ihn dort anpassen und aktivieren.`);
+    setMsg(`Plan „${planName.trim()}" angelegt (${keys.length} Trainingstage) - du findest ihn unter „Pläne" und kannst ihn dort anpassen und aktivieren.`);
   };
   const setCount = (t) => t.rows.reduce((a, r) => a + (Number(r.sets) || 0), 0);
+  const customCounts = (t) => { const its = (t.day.groups || []).flatMap((g) => g.items || []); return { ex: its.length, sets: its.reduce((a, it) => a + (it.sets || []).length, 0) }; };
+
+  // Alle bisher angelegten Trainings (Tage) aus den Plänen aller Coachees als Vorlagen ablegen
+  const importAll = async () => {
+    setImporting(true); setMsg("");
+    const multi = (coachees || []).length > 1;
+    const items = []; const failedNames = [];
+    for (const c of coachees || []) {
+      let list;
+      if (c.id === coacheeId) list = plans;
+      else { const r = await loadKeyChecked(`plans-${c.id}`); if (!r.ok) { failedNames.push(c.name); continue; } list = r.value || []; }
+      (list || []).forEach((pl) => (pl.days || []).forEach((d) => {
+        if (d.isRestDay || d.isBaseline || !(d.groups || []).length) return;
+        items.push(templateFromDay(d, dayTitle(d, pl.name, multi ? c.name : ""), pl.name));
+      }));
+    }
+    const r = await addCustomTemplates(items);
+    setImporting(false);
+    if (!r.ok) { setMsg("Speichern der Vorlagen fehlgeschlagen - bitte erneut versuchen."); return; }
+    setCustom(r.list);
+    setMsg(`${r.added} Training${r.added !== 1 ? "s" : ""} als Vorlage abgelegt${r.skipped ? `, ${r.skipped} identische übersprungen` : ""}${failedNames.length ? `. Nicht geladen werden konnten die Pläne von: ${failedNames.join(", ")}` : ""}.`);
+  };
+  const removeCustom = async (t) => {
+    if (!window.confirm(`Vorlage „${t.title}" löschen?`)) return;
+    const res = await loadKeyChecked("custom-templates");
+    if (!res.ok) { setMsg("Löschen fehlgeschlagen - bitte erneut versuchen."); return; }
+    const next = (res.value || []).filter((x) => x.id !== t.id);
+    if (!(await saveKey("custom-templates", next))) { setMsg("Löschen fehlgeschlagen - bitte erneut versuchen."); return; }
+    setCustom(next); setSelected((prev) => prev.filter((k) => k !== "c:" + t.id));
+  };
+  const exName = (id) => (exercises.find((e) => e.id === id) || {}).name || "(Übung gelöscht)";
 
   return (
     <div>
@@ -3319,10 +3450,33 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
       <h3 style={{ marginTop: 0 }}>Workout-Vorlagen</h3>
       <p className="ptlog-muted" style={{ fontSize: 13, marginTop: 0 }}>Deine Trainingspläne als Bausteine: einzelne Workouts in einen Plan kopieren oder mehrere auswählen (max. 6) und daraus direkt einen neuen Plan erstellen. Gewichte trägst du danach im Plan ein.</p>
       {msg && <p className="ptlog-goal-banner">{msg}</p>}
+      {PROGRAMS.map((prog) => (
+        <div key={prog.id} className="ptlog-block-card" style={{ marginBottom: 18 }}>
+          <div className="ptlog-block-group-label" style={{ marginBottom: 4 }}>Programm</div>
+          <strong>{prog.title}</strong>
+          <p className="ptlog-muted" style={{ fontSize: 13, margin: "6px 0 10px" }}>{prog.description}</p>
+          <div className="ptlog-add-row" style={{ alignItems: "center" }}>
+            <label className="ptlog-muted" style={{ fontSize: 12 }}>Start (Montag)</label>
+            <input type="date" value={progStart} onChange={(e) => setProgStart(e.target.value)} style={{ width: 150 }} />
+            <button className="ptlog-btn primary" onClick={() => createProgram(prog)} disabled={!progStart}>Für {coacheeObj ? coacheeObj.name : "Coachee"} anlegen</button>
+          </div>
+          <button className="ptlog-btn" style={{ marginTop: 8 }} onClick={() => setProgOpen(!progOpen)}>{progOpen ? "Übersicht ausblenden" : "Übersicht der 14 Blöcke"}</button>
+          {progOpen && (
+            <div style={{ marginTop: 8 }}>
+              {prog.blocks.map((b) => (
+                <div key={b.title} style={{ fontSize: 12, padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+                  <strong>{b.title}</strong>
+                  {b.days.filter((d) => !d.rest).map((d) => (<div key={d.weekday} className="ptlog-muted">{WEEKDAY_ABBR[d.weekday]} · {d.sessionName}: {d.summary}</div>))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
       {selected.length > 0 && (
         <div className="ptlog-block-card" style={{ marginBottom: 12 }}>
           <strong>{selected.length} Workout{selected.length !== 1 ? "s" : ""} ausgewählt</strong>
-          <div className="ptlog-muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>{selected.join(" · ")} - werden automatisch auf die Wochentage verteilt.</div>
+          <div className="ptlog-muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>{selected.map(selectedName).join(" · ")} - werden automatisch auf die Wochentage verteilt.</div>
           <div className="ptlog-add-row">
             <input placeholder="Name des neuen Plans" value={planName} onChange={(e) => setPlanName(e.target.value)} style={{ flex: 1 }} />
             <button className="ptlog-btn primary" onClick={createPlan} disabled={!planName.trim()}>Plan erstellen</button>
@@ -3330,12 +3484,56 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
           </div>
         </div>
       )}
+
+      <div style={{ marginBottom: 18 }}>
+        <div className="ptlog-block-group-label" style={{ marginBottom: 6 }}>Meine Vorlagen{custom && custom.length ? ` (${custom.length})` : ""}</div>
+        <button className="ptlog-btn" onClick={importAll} disabled={importing || custom === null || customFailed} style={{ marginBottom: 8 }}>
+          <BookmarkPlus size={14} /> {importing ? "Übernehme…" : "Alle bisherigen Trainings als Vorlagen ablegen"}
+        </button>
+        {customFailed && <p className="ptlog-muted" style={{ fontSize: 12 }}>Eigene Vorlagen konnten nicht geladen werden - bitte Seite neu laden.</p>}
+        {custom && custom.length === 0 && !customFailed && <p className="ptlog-muted" style={{ fontSize: 13, margin: "4px 0" }}>Noch keine eigenen Vorlagen. Der Button übernimmt jedes Training aus allen Plänen aller Coachees (ohne Gewichte, ohne Ist-Stand-Tests, identische nur einmal). Einzelne Trainings legst du im Plan über das Lesezeichen-Symbol ab.</p>}
+        {(custom || []).map((t) => {
+          const key = "c:" + t.id; const isOpen = !!open[key]; const isSel = selected.includes(key); const cnt = customCounts(t);
+          return (
+            <div key={t.id} className="ptlog-day-card">
+              <div className="ptlog-day-card-header" onClick={() => setOpen({ ...open, [key]: !isOpen })}>
+                <div>
+                  <strong>{t.title}</strong>
+                  <div className="ptlog-entry-macros">{cnt.ex} Übung{cnt.ex !== 1 ? "en" : ""} · {cnt.sets} Satz{cnt.sets !== 1 ? "e" : ""}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
+                  <label className="ptlog-checkbox" title="Für neuen Plan auswählen" aria-label="Für neuen Plan auswählen">
+                    <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle(key)} style={{ width: 20, height: 20 }} />
+                  </label>
+                  <button className="ptlog-btn" style={{ whiteSpace: "nowrap" }} onClick={() => copyCustomToPlan(t)}><Send size={13} /> In Plan</button>
+                  <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, cursor: "pointer" }} onClick={() => setOpen({ ...open, [key]: !isOpen })} />
+                </div>
+              </div>
+              {isOpen && (
+                <div className="ptlog-day-card-body">
+                  {(t.day.groups || []).map((g) => (g.items || []).map((it) => (
+                    <div key={it.id} className="ptlog-row-between" style={{ fontSize: 13, padding: "3px 0", gap: 8 }}>
+                      <span>{g.type === "superset" ? "⚡ " : ""}{exName(it.exerciseId)} <InfoBtn name={exName(it.exerciseId)} /></span>
+                      <span className="ptlog-muted" style={{ whiteSpace: "nowrap" }}>{(it.sets || []).length}× {(it.sets || [])[0] ? (it.sets[0].reps || "–") : "–"}{it.rir ? ` · RiR ${it.rir}` : ""}</span>
+                    </div>
+                  )))}
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span className="ptlog-muted" style={{ fontSize: 11 }}>{t.source ? `aus Plan „${t.source}"` : ""}</span>
+                    <button className="ptlog-btn" onClick={() => removeCustom(t)}>Vorlage löschen</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       {families.map(({ fam, items }) => (
         <div key={fam} style={{ marginBottom: 14 }}>
           <div className="ptlog-block-group-label" style={{ marginBottom: 6 }}>{fam}</div>
           {items.map((t) => {
             const isOpen = !!open[t.title];
-            const isSel = selected.includes(t.title);
+            const isSel = selected.includes("b:" + t.title);
             return (
               <div key={t.title} className="ptlog-day-card">
                 <div className="ptlog-day-card-header" onClick={() => setOpen({ ...open, [t.title]: !isOpen })}>
@@ -3345,7 +3543,7 @@ function TemplateLibrary({ exercises, setExercises, plans, setPlans, coachees, c
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
                     <label className="ptlog-checkbox" title="Für neuen Plan auswählen" aria-label="Für neuen Plan auswählen">
-                      <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle(t.title)} style={{ width: 20, height: 20 }} />
+                      <input type="checkbox" checked={isSel} disabled={!isSel && selected.length >= 6} onChange={() => toggle("b:" + t.title)} style={{ width: 20, height: 20 }} />
                     </label>
                     <button className="ptlog-btn" style={{ whiteSpace: "nowrap" }} onClick={() => copyToPlan(t)}><Send size={13} /> In Plan</button>
                     <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, cursor: "pointer" }} onClick={() => setOpen({ ...open, [t.title]: !isOpen })} />
@@ -3478,7 +3676,7 @@ function CoacheeTrainingView({ plans, exercises, sessions, setSessions, setExerc
       const wasDone = entry.sets[setIdx].done;
       const groupMembers = entry.groupType === "superset" && entry.groupId ? prev.entries.filter((e) => e.groupId === entry.groupId) : [];
       const isLastInRound = groupMembers.length < 2 || groupMembers[groupMembers.length - 1].id === entry.id;
-      if (!wasDone && isLastInRound) { const tot = entry.restSeconds || 90; setRestTimer({ entryId, setIdx, total: tot, endsAt: Date.now() + tot * 1000 }); }
+      if (!wasDone && isLastInRound) { const tot = entry.restSeconds ?? 90; if (tot > 0) setRestTimer({ entryId, setIdx, total: tot, endsAt: Date.now() + tot * 1000 }); }
       // Ein Tap: leere Felder übernehmen beim Abhaken die Vorschlagswerte (Plan-Vorgabe bzw. letztes Mal)
       const sug = !wasDone ? suggestSetValues(sessions, entry, setIdx, prev.id) : null;
       return { ...prev, entries: prev.entries.map((e) => (e.id === entryId ? { ...e, sets: e.sets.map((s, i) => {
